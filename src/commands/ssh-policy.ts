@@ -136,6 +136,26 @@ async function doClear(scope: string, state: PolicyCommandState, ctx: ExtensionC
 	ctx.ui.notify(`Cleared ${scope} policy scope`, "info");
 }
 
+// Deprecation warning shown once per session
+let sshPolicyDeprecationShown = false;
+
+/**
+ * Reset deprecation flag (for testing purposes only)
+ */
+export function resetSshPolicyDeprecationFlag() {
+	sshPolicyDeprecationShown = false;
+}
+
+function showDeprecationNoticeIfNeeded(ctx: ExtensionCommandContext) {
+	if (!sshPolicyDeprecationShown) {
+		sshPolicyDeprecationShown = true;
+		ctx.ui.notify(
+			"/ssh-policy is deprecated. Use /permissions for a unified permissions panel.",
+			"warning"
+		);
+	}
+}
+
 export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandState) {
 	pi.registerCommand("permissions", {
 		description: "Configure SSH/Bash permissions",
@@ -163,8 +183,11 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 	});
 
 	pi.registerCommand("ssh-policy", {
-		description: "Manage ssh permission policy (list|clear|revoke|reload)",
+		description: "Manage ssh permission policy (list|clear|revoke|reload) [deprecated: use /permissions]",
 		handler: async (args, ctx) => {
+			// Show deprecation notice before any output
+			showDeprecationNoticeIfNeeded(ctx);
+
 			const [cmd = "list", scope = "effective", prefix] = args.trim().split(/\s+/).filter(Boolean);
 
 			if (cmd === "reload") {
