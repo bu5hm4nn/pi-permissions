@@ -42,3 +42,9 @@ export function isReusableUnsafe(command: string, cwd?: string): boolean {
 	const c = normalizeCommand(command);
 	return /(^|\s|[;\n|&]\s*)(\.\/|\.\.\/)/.test(c);
 }
+
+export function computeBashFingerprint(command: string): string {
+	const commandCanonical = normalizeCommand(command);
+	const material = `v1:bash\n${commandCanonical}`;
+	return createHash("sha256").update(material).digest("hex");
+}

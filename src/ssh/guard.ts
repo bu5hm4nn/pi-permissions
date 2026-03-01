@@ -1,9 +1,21 @@
-import { buildCommandPreview } from "../policy/fingerprint.ts";
+import { analyzeCommandPatterns } from "../policy/command-patterns.ts";
+import { buildCommandPreview, computeBashFingerprint } from "../policy/fingerprint.ts";
+
+export interface BashApprovalResult {
+	approved: boolean;
+	scope: "none" | "session" | "project" | "global";
+}
 
 export interface GuardRuntime {
 	guardHealthy: boolean;
 	matchDirectSsh: (command: string) => boolean;
 	audit?: (entry: Record<string, unknown>) => Promise<void>;
+	// Optional bash permissions config
+	bashPermissions?: { enabled: boolean };
+	// Optional callback to check bash command approval
+	checkBashApproval?: (fingerprint: string, domain: string, patterns?: string[]) => Promise<BashApprovalResult>;
+	// Whether UI is available for prompts
+	hasUI?: boolean;
 }
 
 export async function handleToolCallGuard(event: any, runtime: GuardRuntime) {
@@ -13,15 +25,53 @@ export async function handleToolCallGuard(event: any, runtime: GuardRuntime) {
 	}
 	if (event.toolName !== "bash") return;
 	const cmd = String((event.input as any)?.command ?? "");
-	let blocked = true;
+
+	// Always check direct SSH blocking first (takes precedence)
+	let directSshBlocked = true;
 	try {
-		blocked = runtime.matchDirectSsh(cmd);
+		directSshBlocked = runtime.matchDirectSsh(cmd);
 	} catch {
-		blocked = true;
+		directSshBlocked = true;
 	}
-	if (!blocked) return;
-	await runtime.audit?.({ event: "tool_call_block", reason: "direct_ssh_block", commandPreview: buildCommandPreview(cmd) });
-	return { block: true, reason: "Direct SSH-family commands are blocked. Use ssh_bash." };
+	if (directSshBlocked) {
+		await runtime.audit?.({ event: "tool_call_block", reason: "direct_ssh_block", commandPreview: buildCommandPreview(cmd) });
+		return { block: true, reason: "Direct SSH-family commands are blocked. Use ssh_bash." };
+	}
+
+	// If bash permissions not enabled (default), passthrough
+	if (!runtime.bashPermissions?.enabled) {
+		return;
+	}
+
+	// Bash permissions enabled - check approval
+	if (runtime.checkBashApproval) {
+		const fingerprint = computeBashFingerprint(cmd);
+		const patternAnalysis = analyzeCommandPatterns(cmd);
+		const patterns = patternAnalysis.patterns;
+
+		const approval = await runtime.checkBashApproval(fingerprint, "bash", patterns);
+		if (approval.approved) {
+			return; // Passthrough
+		}
+
+		// Not approved - block with appropriate message
+		await runtime.audit?.({
+			event: "tool_call_block",
+			reason: "bash_not_approved",
+			commandPreview: buildCommandPreview(cmd),
+			fingerprint,
+			patterns,
+		});
+		return { block: true, reason: "Bash command not approved. Enable UI for approval prompts." };
+	}
+
+	// No approval callback but bash permissions enabled - fail-closed (block regardless of UI)
+	await runtime.audit?.({
+		event: "tool_call_block",
+		reason: "bash_no_approval_callback",
+		commandPreview: buildCommandPreview(cmd),
+	});
+	return { block: true, reason: "Bash command not approved. Enable UI for approval prompts." };
 }
 
 export async function handleUserBashGuard(event: { command: string }, runtime: GuardRuntime) {

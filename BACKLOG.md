@@ -64,7 +64,7 @@ Last updated: 2026-02-27
       - Advanced subcommands (`status|list|clear|reload|mode`) deferred until after panel MVP.
     - [x] Add strict TDD tests for `/permissions` panel open/render + checkbox state transitions. (RED: failing tests added in `tests/permissions-mvp-red.test.ts`)
     - [x] Introduce policy store schema/version update for config + dual-domain grants.
-    - [ ] Add guard path for regular `bash` permissions (shared analyzer pipeline, domain-tagged fingerprints).
+    - [x] Add guard path for regular `bash` permissions (shared analyzer pipeline, domain-tagged fingerprints).
     - [ ] Reuse/extend prompt messaging to clearly indicate domain (`ssh` vs `bash`) and allow-pattern summary.
     - [ ] Add migration compatibility for existing `ssh-policy` files/commands.
     - [ ] Keep `/ssh-policy` as compatibility alias (deprecation warning + mapped behavior).

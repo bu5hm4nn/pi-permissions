@@ -5,14 +5,16 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { registerPolicyCommands } from "./commands/ssh-policy";
 import { analyzeCommandPatterns, formatAllowPatternSummary } from "./policy/command-patterns";
-import { buildCommandPreview, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
+import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
 import type { PolicyFile } from "./policy/schema";
 import { emptyPolicyFile } from "./policy/schema";
 import {
+	readPermissionsConfig,
 	readPolicy,
 	removeGrantByPrefix,
 	resolveStorePaths,
 	type StorePaths,
+	type PermissionsConfigResult,
 	upsertGrant,
 	writePolicy,
 } from "./policy/store";
@@ -42,7 +44,9 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 	const directSshMatcher = options?.directSshMatcher ?? isDirectSshFamilyCommand;
 	let paths: StorePaths | null = null;
 	let sessionGrants = new Set<string>();
+	let bashSessionGrants = new Set<string>();
 	let guardHealthy = true;
+	let permissionsConfig: PermissionsConfigResult = { ssh: { enabled: true }, bash: { enabled: false } };
 
 	const auditPath = join(process.env.HOME || "", ".pi", "agent", "ssh-policy-audit.log");
 
@@ -250,13 +254,22 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 
 	pi.on("session_start", async (_event, ctx) => {
 		sessionGrants = new Set();
+		bashSessionGrants = new Set();
 		try {
 			paths = await runStartupSelfCheck(ctx.cwd);
 			guardHealthy = true;
+			// Load permissions config
+			try {
+				permissionsConfig = await readPermissionsConfig(ctx.cwd);
+			} catch {
+				// Use defaults if config read fails
+				permissionsConfig = { ssh: { enabled: true }, bash: { enabled: false } };
+			}
 			ctx.ui.setStatus("ssh-policy", ctx.ui.theme.fg("accent", "ssh-permission: active"));
 		} catch (e) {
 			guardHealthy = false;
 			paths = null;
+			permissionsConfig = { ssh: { enabled: true }, bash: { enabled: false } };
 			ctx.ui.setStatus("ssh-policy", ctx.ui.theme.fg("error", "ssh-permission: fail-closed"));
 			ctx.ui.notify(`ssh-permission startup self-check failed: ${e instanceof Error ? e.message : String(e)}`, "error");
 		}
@@ -264,6 +277,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 
 	const clearSessionGrants = () => {
 		sessionGrants = new Set();
+		bashSessionGrants = new Set();
 	};
 
 	const clearSessionGrantsOnBoundary = (event?: { reason?: unknown }) => {
@@ -289,11 +303,26 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		clearSessionGrantsOnBoundary(event);
 	});
 
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", async (event, ctx) => {
 		return handleToolCallGuard(event, {
 			guardHealthy,
 			matchDirectSsh: directSshMatcher,
 			audit,
+			bashPermissions: permissionsConfig.bash,
+			hasUI: ctx?.hasUI ?? false,
+			checkBashApproval: async (fingerprint, _domain, patterns) => {
+				// Check session grants first
+				if (bashSessionGrants.has(fingerprint)) {
+					return { approved: true, scope: "session" as const };
+				}
+				// Check reusable pattern fingerprints
+				const reusableFingerprints = (patterns || []).map((p) => computeBashFingerprint(p));
+				if (reusableFingerprints.length > 0 && reusableFingerprints.every((fp) => bashSessionGrants.has(fp))) {
+					return { approved: true, scope: "session" as const };
+				}
+				// TODO: Check project/global policy grants for bash domain
+				return { approved: false, scope: "none" as const };
+			},
 		});
 	});
 
