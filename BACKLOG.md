@@ -69,7 +69,7 @@ Last updated: 2026-02-27
     - [x] Add migration compatibility for existing `ssh-policy` files/commands.
     - [x] Keep `/ssh-policy` as compatibility alias (deprecation warning + mapped behavior).
     - [x] Add integration tests for no-UI behavior and fail-closed semantics in `bash` domain.
-    - [ ] Document examples for both domains and safe rollout defaults.
+    - [x] Document examples for both domains and safe rollout defaults.
 
 
 - [ ] Improve approval dialog transparency.
