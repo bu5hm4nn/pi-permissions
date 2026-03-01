@@ -1,0 +1,23 @@
+// bash-parser is a CommonJS package.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import parseBashModule from "bash-parser";
+import type { ParseShellResult } from "./types.ts";
+
+export const parseBash: ((source: string) => any) | undefined =
+	typeof parseBashModule === "function" ? parseBashModule : (parseBashModule as any)?.default;
+
+export function parseShell(source: string): ParseShellResult {
+	if (typeof parseBash !== "function") {
+		return { ast: null, certainty: "uncertain", error: "bash_parser_unavailable" };
+	}
+	try {
+		return { ast: parseBash(source), certainty: "resolved" };
+	} catch (error) {
+		return {
+			ast: null,
+			certainty: "uncertain",
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
+}

@@ -1,0 +1,92 @@
+[
+  {
+    "name": "plain command",
+    "command": "echo ok",
+    "expect": {
+      "matcherBlocked": false,
+      "patternsComplete": true,
+      "patterns": ["echo *"]
+    }
+  },
+  {
+    "name": "direct ssh",
+    "command": "ssh user@host",
+    "expect": {
+      "matcherBlocked": true,
+      "patternsComplete": true,
+      "patterns": ["ssh *"]
+    }
+  },
+  {
+    "name": "wrapped ssh",
+    "command": "sudo -- ssh user@host",
+    "expect": {
+      "matcherBlocked": true,
+      "patternsComplete": true,
+      "patterns": ["ssh *"]
+    }
+  },
+  {
+    "name": "curl multi-transfer",
+    "command": "curl -d 'a=1' https://api.example.com/a --next curl -I https://api.example.com/b",
+    "expect": {
+      "matcherBlocked": false,
+      "patternsComplete": true,
+      "patterns": ["curl POST https://api.example.com/a", "curl HEAD *"]
+    }
+  },
+  {
+    "name": "docker nested shell",
+    "command": "docker run --rm alpine sh -lc 'echo hi && id'",
+    "expect": {
+      "matcherBlocked": false,
+      "patternsComplete": true,
+      "patterns": ["docker run *", "docker(run): echo *", "docker(run): id *"]
+    }
+  },
+  {
+    "name": "docker unresolved subcommand",
+    "command": "docker --context prod ps --format '{{.Names}}'",
+    "expect": {
+      "matcherBlocked": false,
+      "patternsComplete": false,
+      "patterns": []
+    }
+  },
+  {
+    "name": "dynamic executable",
+    "command": "$RUNNER foo",
+    "expect": {
+      "matcherBlocked": true,
+      "patternsComplete": false,
+      "patterns": []
+    }
+  },
+  {
+    "name": "unterminated quote",
+    "command": "echo 'unterminated",
+    "expect": {
+      "matcherBlocked": true,
+      "patternsComplete": false,
+      "patterns": []
+    }
+  },
+  {
+    "name": "process substitution with ssh",
+    "command": "cat <(ssh user@host)",
+    "expect": {
+      "matcherBlocked": true,
+      "patternsComplete": false,
+      "patterns": []
+    }
+  },
+  {
+    "name": "python heredoc maintenance style",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nprint('hello')\nPY",
+    "expect": {
+      "matcherBlocked": true,
+      "patternsComplete": false,
+      "patterns": []
+    }
+  }
+]
