@@ -304,7 +304,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		return handleToolCallGuard(event, {
+		const result = await handleToolCallGuard(event, {
 			guardHealthy,
 			matchDirectSsh: directSshMatcher,
 			audit,
@@ -324,6 +324,43 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 				return { approved: false, scope: "none" as const };
 			},
 		});
+
+		// Handle promptNeeded for bash commands
+		if (result && "promptNeeded" in result && result.promptNeeded && result.fingerprint) {
+			const cmd = String((event.input as any)?.command ?? "");
+			const reusableUnsafe = !result.patternAnalysisComplete || (result.patterns?.length ?? 0) === 0;
+			const allowPatternSummary = formatAllowPatternSummary(result.patterns || []);
+
+			const decision = await promptPermission(ctx, {
+				target: "local",
+				commandPreview: result.commandPreview || buildCommandPreview(cmd),
+				commandFull: cmd,
+				reusableUnsafe,
+				allowPatternSummary,
+				domain: "bash",
+			});
+
+			if (decision === "deny") {
+				await audit({
+					event: "bash_tool_call_block",
+					reason: "user_denied",
+					commandPreview: result.commandPreview,
+					fingerprint: result.fingerprint,
+				});
+				return { block: true, reason: "Blocked by user" };
+			}
+
+			if (decision === "allow_session" && !reusableUnsafe) {
+				for (const pattern of result.patterns || []) {
+					bashSessionGrants.add(computeBashFingerprint(pattern));
+				}
+			}
+
+			// allow_once or allow_session: proceed (return undefined to allow)
+			return undefined;
+		}
+
+		return result;
 	});
 
 	pi.on("user_bash", async (event) => {

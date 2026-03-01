@@ -5,6 +5,8 @@ export type PermissionDecision = "allow_once" | "allow_session" | "allow_project
 const OPTIONS_ALL = ["1. Allow Once", "2. Allow for this session", "3. Allow for this Project", "4. Deny"];
 const OPTIONS_RESTRICTED = ["1. Allow Once", "2. Deny"];
 
+export type PermissionDomain = "ssh" | "bash";
+
 export async function promptPermission(
 	ctx: ExtensionContext,
 	preview: {
@@ -15,9 +17,12 @@ export async function promptPermission(
 		allowPatternSummary?: string;
 		missingPatternSummary?: string;
 		analysisComplete?: boolean;
+		domain?: PermissionDomain;
 	},
 ): Promise<PermissionDecision> {
 	if (!ctx.hasUI) return "deny";
+	const domain = preview.domain ?? "ssh";
+	const domainLabel = domain === "bash" ? "Bash" : "SSH";
 	const allowLine = preview.allowPatternSummary
 		? `\nAllow for session/project will grant: ${preview.allowPatternSummary}`
 		: "";
@@ -32,8 +37,9 @@ export async function promptPermission(
 		: "";
 	const options = preview.reusableUnsafe ? OPTIONS_RESTRICTED : OPTIONS_ALL;
 	const commandText = preview.commandFull && preview.commandFull.trim().length > 0 ? preview.commandFull : preview.commandPreview;
+	const targetLine = domain === "ssh" ? `\nTarget: ${preview.target}` : "";
 	const selected = await ctx.ui.select(
-		`SSH command requires approval\n\nTarget: ${preview.target}\nCommand: ${commandText}${allowLine}${missingLine}${analysisNote}${unsafeNote}`,
+		`${domainLabel} command requires approval${targetLine}\nCommand: ${commandText}${allowLine}${missingLine}${analysisNote}${unsafeNote}`,
 		options,
 	);
 	if (!selected) return "deny";

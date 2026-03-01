@@ -6,6 +6,16 @@ export interface BashApprovalResult {
 	scope: "none" | "session" | "project" | "global";
 }
 
+export interface GuardResult {
+	block?: boolean;
+	reason?: string;
+	promptNeeded?: boolean;
+	fingerprint?: string;
+	patterns?: string[];
+	commandPreview?: string;
+	patternAnalysisComplete?: boolean;
+}
+
 export interface GuardRuntime {
 	guardHealthy: boolean;
 	matchDirectSsh: (command: string) => boolean;
@@ -48,17 +58,29 @@ export async function handleToolCallGuard(event: any, runtime: GuardRuntime) {
 		const fingerprint = computeBashFingerprint(cmd);
 		const patternAnalysis = analyzeCommandPatterns(cmd);
 		const patterns = patternAnalysis.patterns;
+		const commandPreview = buildCommandPreview(cmd);
 
 		const approval = await runtime.checkBashApproval(fingerprint, "bash", patterns);
 		if (approval.approved) {
 			return; // Passthrough
 		}
 
-		// Not approved - block with appropriate message
+		// Not approved - if UI available, signal prompt needed; otherwise block
+		if (runtime.hasUI) {
+			return {
+				promptNeeded: true,
+				fingerprint,
+				patterns,
+				commandPreview,
+				patternAnalysisComplete: patternAnalysis.complete,
+			};
+		}
+
+		// No UI - block with appropriate message
 		await runtime.audit?.({
 			event: "tool_call_block",
 			reason: "bash_not_approved",
-			commandPreview: buildCommandPreview(cmd),
+			commandPreview,
 			fingerprint,
 			patterns,
 		});
