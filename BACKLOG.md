@@ -66,7 +66,7 @@ Last updated: 2026-02-27
     - [x] Introduce policy store schema/version update for config + dual-domain grants.
     - [x] Add guard path for regular `bash` permissions (shared analyzer pipeline, domain-tagged fingerprints).
     - [x] Reuse/extend prompt messaging to clearly indicate domain (`ssh` vs `bash`) and allow-pattern summary.
-    - [ ] Add migration compatibility for existing `ssh-policy` files/commands.
+    - [x] Add migration compatibility for existing `ssh-policy` files/commands.
     - [ ] Keep `/ssh-policy` as compatibility alias (deprecation warning + mapped behavior).
     - [ ] Add integration tests for no-UI behavior and fail-closed semantics in `bash` domain.
     - [ ] Document examples for both domains and safe rollout defaults.
