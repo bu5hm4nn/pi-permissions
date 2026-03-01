@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
+import { readPermissionsConfig } from "../policy/store.ts";
 
 export interface PolicyCommandState {
 	getSessionFingerprints: () => Set<string>;
@@ -165,17 +166,60 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				return;
 			}
 			try {
-				const openPanel = (ctx.ui as any).openPanel;
-				if (typeof openPanel !== "function") {
-					ctx.ui.notify("/permissions requires ui.openPanel availability", "error");
-					return;
+				const cwd = ctx.cwd || process.cwd();
+				const config = await readPermissionsConfig(cwd);
+
+				// Interactive loop for toggling permissions
+				while (true) {
+					// Build menu options showing current state
+					const sshStatus = config.ssh.enabled ? "✓" : "○";
+					const bashStatus = config.bash.enabled ? "✓" : "○";
+
+					const choice = await ctx.ui.select("Permissions Configuration", [
+						`[${sshStatus}] SSH permissions (${config.ssh.enabled ? "enabled" : "disabled"})`,
+						`[${bashStatus}] Bash permissions (${config.bash.enabled ? "enabled" : "disabled"})`,
+						"───────────────────",
+						"Save to global (~/.pi/agent/permissions.json)",
+						"Save to project (.pi/permissions.json)",
+						"Cancel",
+					]);
+
+					if (!choice || choice === "Cancel" || choice.startsWith("───")) {
+						return;
+					}
+
+					// Toggle SSH
+					if (choice.includes("SSH permissions")) {
+						config.ssh.enabled = !config.ssh.enabled;
+						continue; // Re-show menu with updated state
+					}
+
+					// Toggle Bash
+					if (choice.includes("Bash permissions")) {
+						config.bash.enabled = !config.bash.enabled;
+						continue; // Re-show menu with updated state
+					}
+
+					// Save to global
+					if (choice.includes("global")) {
+						await persistPermissionsMvp("global", cwd, {
+							sshEnabled: config.ssh.enabled,
+							bashEnabled: config.bash.enabled,
+						});
+						ctx.ui.notify("Permissions saved to global config", "info");
+						return;
+					}
+
+					// Save to project
+					if (choice.includes("project")) {
+						await persistPermissionsMvp("project", cwd, {
+							sshEnabled: config.ssh.enabled,
+							bashEnabled: config.bash.enabled,
+						});
+						ctx.ui.notify("Permissions saved to project config", "info");
+						return;
+					}
 				}
-				const result = await openPanel(permissionsPanel());
-				if (!result || String(result.action || "").toLowerCase() !== "save") return;
-				const values = (result && typeof result === "object" ? (result as any).values : null) || {};
-				const scope = values.scope === "project" ? "project" : "global";
-				const cwd = (ctx as any).cwd || process.cwd();
-				await persistPermissionsMvp(scope, cwd, values);
 			} catch (e) {
 				ctx.ui.notify(`Failed to handle /permissions: ${e instanceof Error ? e.message : String(e)}`, "error");
 			}
