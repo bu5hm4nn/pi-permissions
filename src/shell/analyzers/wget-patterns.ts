@@ -53,6 +53,32 @@ function parseWgetMethod(tokens: string[]): { method: string; complete: boolean 
 	return { method, complete: true };
 }
 
+const URL_SCOPED_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function extractWgetTransferUrl(tokens: string[]): string | null {
+	for (let i = tokens.length - 1; i >= 0; i--) {
+		const token = tokens[i].trim();
+		if (!token || token.startsWith("-")) continue;
+		if (/^[a-z][a-z0-9+.-]*:\/\//i.test(token)) return token;
+	}
+	return null;
+}
+
+function canonicalizeTransferUrl(rawUrl: string): string | null {
+	try {
+		const url = new URL(rawUrl);
+		if (!url.protocol || !url.hostname) return null;
+		const protocol = url.protocol.toLowerCase();
+		const hostname = url.hostname.toLowerCase();
+		const omitPort = (protocol === "http:" && url.port === "80") || (protocol === "https:" && url.port === "443");
+		const port = url.port && !omitPort ? `:${url.port}` : "";
+		const path = url.pathname || "/";
+		return `${protocol}//${hostname}${port}${path}`;
+	} catch {
+		return null;
+	}
+}
+
 export function extractWgetMethodPatterns(args: string[]): { patterns: string[]; complete: boolean } {
 	const tokens: string[] = [];
 	for (const raw of args) {
@@ -63,5 +89,12 @@ export function extractWgetMethodPatterns(args: string[]): { patterns: string[];
 
 	const parsed = parseWgetMethod(tokens);
 	if (!parsed.complete) return { patterns: [], complete: false };
-	return { patterns: [`wget ${parsed.method} *`], complete: true };
+
+	const transferUrl = extractWgetTransferUrl(tokens);
+	const scope =
+		URL_SCOPED_METHODS.has(parsed.method) && transferUrl
+			? (canonicalizeTransferUrl(transferUrl) ?? transferUrl)
+			: "*";
+	
+	return { patterns: [`wget ${parsed.method} ${scope}`], complete: true };
 }

@@ -97,7 +97,7 @@ Last updated: 2026-02-27
     - [x] Extend `src/shell/analyzers/curl-patterns.ts` to emit host/path-scoped patterns for destructive methods.
     - [x] Keep existing `curl GET *` behavior as default and add tests proving no regression.
     - [x] Update pattern union/approval checks in `src/index.ts` (if needed) to support new URL-scoped pattern matching.
-    - [ ] Update prompt summaries to display URL-scoped patterns clearly (and add prompt rendering tests).
+    - [x] Update prompt summaries to display URL-scoped patterns clearly (and add prompt rendering tests).
     - [x] Add migration/compat handling for existing stored `curl METHOD *` approvals (backward compatibility strategy).
     - [ ] Add integration tests covering multi-command chains with mixed curl hosts/methods.
 

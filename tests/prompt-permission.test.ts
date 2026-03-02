@@ -24,3 +24,25 @@ test("promptPermission select text includes wget summary example", async () => {
 
 	assert.match(capturedText, /wget --post-data=\.\.\. https:\/\/api\.example\.com\/\.\.\./);
 });
+
+test("promptPermission select text includes URL-scoped pattern summary example", async () => {
+	let capturedText = "";
+	const ctx: any = {
+		hasUI: true,
+		ui: {
+			select: async (text: string) => {
+				capturedText = text;
+				return "4. Deny";
+			},
+		},
+	};
+
+	await promptPermission(ctx, {
+		target: "dev@example.com",
+		commandPreview: "curl -X DELETE https://api.admin.org/items/1",
+		reusableUnsafe: false,
+		allowPatternSummary: formatAllowPatternSummary(["curl DELETE https://api.admin.org/*"]),
+	});
+
+	assert.match(capturedText, /curl -X DELETE https:\/\/api\.admin\.org\/\.\.\./);
+});

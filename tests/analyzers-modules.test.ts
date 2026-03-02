@@ -85,7 +85,7 @@ test("docker analyzer module extracts nested shell command patterns", () => {
 test("wget analyzer module extracts transfer method", () => {
 	const analysis = extractWgetMethodPatterns(["--post-data=a=1", "https://api.example.com/a"]);
 	assert.equal(analysis.complete, true);
-	assert.deepEqual(analysis.patterns, ["wget POST *"]);
+	assert.deepEqual(analysis.patterns, ["wget POST https://api.example.com/a"]);
 });
 
 test("wget analyzer module treats malformed --method parsing as incomplete", () => {

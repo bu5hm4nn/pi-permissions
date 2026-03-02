@@ -121,8 +121,22 @@ export function analyzeCommandPatterns(command: string): CommandPatternAnalysis 
 }
 
 function formatPatternExample(pattern: string): string | null {
-	if (pattern === "wget POST *") return "wget --post-data=... https://api.example.com/...";
-	if (pattern === "wget DELETE *") return "wget --method=DELETE https://api.example.com/...";
+	const parts = pattern.split(" ");
+	if (parts.length >= 3 && parts[0] === "wget") {
+		const method = parts[1];
+		const scope = parts.slice(2).join(" ");
+		const urlPart = scope === "*" ? "https://api.example.com/..." : scope.replace(/\*$/, "...");
+		if (method === "POST") return `wget --post-data=... ${urlPart}`;
+		if (method === "DELETE") return `wget --method=DELETE ${urlPart}`;
+		if (method === "PUT") return `wget --method=PUT ${urlPart}`;
+		if (method === "PATCH") return `wget --method=PATCH ${urlPart}`;
+	}
+	if (parts.length >= 3 && parts[0] === "curl") {
+		const method = parts[1];
+		const scope = parts.slice(2).join(" ");
+		const urlPart = scope === "*" ? "https://api.example.com/..." : scope.replace(/\*$/, "...");
+		if (method !== "GET" && method !== "HEAD") return `curl -X ${method} ${urlPart}`;
+	}
 	return null;
 }
 
