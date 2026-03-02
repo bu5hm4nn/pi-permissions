@@ -126,6 +126,17 @@ function formatPatternExample(pattern: string): string | null {
 	return null;
 }
 
+export function getFallbackPattern(pattern: string): string | null {
+	if (!pattern) return null;
+	if (pattern.endsWith(" *")) return null;
+	const parts = pattern.split(" ");
+	if (parts.length >= 3 && (parts[0] === "curl" || parts[0] === "wget")) {
+		// e.g. "curl POST https://api.example.com" -> "curl POST *"
+		return `${parts[0]} ${parts[1]} *`;
+	}
+	return null;
+}
+
 export function formatAllowPatternSummary(patterns: string[], maxItems = 8): string {
 	if (patterns.length === 0) return "";
 	const shownPatterns = patterns.slice(0, maxItems);

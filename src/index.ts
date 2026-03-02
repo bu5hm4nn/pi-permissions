@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { registerPolicyCommands } from "./commands/ssh-policy";
-import { analyzeCommandPatterns, formatAllowPatternSummary } from "./policy/command-patterns";
+import { analyzeCommandPatterns, formatAllowPatternSummary, getFallbackPattern } from "./policy/command-patterns";
 import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
 import type { PolicyFile } from "./policy/schema";
 import { emptyPolicyFile } from "./policy/schema";
@@ -170,7 +170,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 
 	async function getApprovalFromPolicies(
 		exactFingerprint: string,
-		reusableEntries: Array<{ fingerprint: string; pattern: string }>,
+		reusableEntries: Array<{ fingerprint: string; pattern: string; fallbackFingerprint?: string }>,
 		hasUI: boolean,
 	): Promise<{
 		approved: boolean;
@@ -178,10 +178,12 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		policyError?: string;
 		missingPatterns?: string[];
 	}> {
-		const reusableFingerprints = reusableEntries.map((e) => e.fingerprint);
+		const isApprovedInSet = (entry: { fingerprint: string; fallbackFingerprint?: string }, set: Set<string>) =>
+			set.has(entry.fingerprint) || (entry.fallbackFingerprint !== undefined && set.has(entry.fallbackFingerprint));
+
 		const sessionApprovedExact = hasUI && sessionGrants.has(exactFingerprint);
 		const sessionApprovedReusableOnly =
-			hasUI && reusableFingerprints.length > 0 && reusableFingerprints.every((fingerprint) => sessionGrants.has(fingerprint));
+			hasUI && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionGrants));
 		try {
 			const global = await readGlobalPolicy();
 			const trustedProject = await isProjectTrusted(requirePaths().projectId);
@@ -196,19 +198,19 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			for (const fp of persistentEffective) sessionEffective.add(fp);
 
 			const reusableSatisfiedBySession =
-				hasUI && reusableFingerprints.length > 0 && reusableFingerprints.every((fingerprint) => sessionEffective.has(fingerprint));
+				hasUI && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionEffective));
 			const reusableSatisfiedByPersistent =
-				reusableFingerprints.length > 0 && reusableFingerprints.every((fingerprint) => persistentEffective.has(fingerprint));
+				reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, persistentEffective));
 
 			if (sessionApprovedExact || reusableSatisfiedBySession) return { approved: true, scope: "session" };
 			if (globalSet.has(exactFingerprint)) return { approved: true, scope: "global" };
 			if (trustedProject && projectSet.has(exactFingerprint)) return { approved: true, scope: "project" };
 			if (reusableSatisfiedByPersistent) {
-				const hasProjectComponent = trustedProject && reusableFingerprints.some((fingerprint) => projectSet.has(fingerprint));
+				const hasProjectComponent = trustedProject && reusableEntries.some((entry) => isApprovedInSet(entry, projectSet));
 				return { approved: true, scope: hasProjectComponent ? "project" : "global" };
 			}
 			const missingPatterns = reusableEntries
-				.filter((entry) => !sessionEffective.has(entry.fingerprint))
+				.filter((entry) => !isApprovedInSet(entry, sessionEffective))
 				.map((entry) => entry.pattern);
 			return { approved: false, scope: "none", missingPatterns };
 		} catch (e) {
@@ -315,9 +317,15 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 				if (bashSessionGrants.has(fingerprint)) {
 					return { approved: true, scope: "session" as const };
 				}
+				
+				const isApproved = (p: string) => {
+					if (bashSessionGrants.has(computeBashFingerprint(p))) return true;
+					const fallback = getFallbackPattern(p);
+					return fallback ? bashSessionGrants.has(computeBashFingerprint(fallback)) : false;
+				};
+
 				// Check reusable pattern fingerprints
-				const reusableFingerprints = (patterns || []).map((p) => computeBashFingerprint(p));
-				if (reusableFingerprints.length > 0 && reusableFingerprints.every((fp) => bashSessionGrants.has(fp))) {
+				if (patterns && patterns.length > 0 && patterns.every(isApproved)) {
 					return { approved: true, scope: "session" as const };
 				}
 				// TODO: Check project/global policy grants for bash domain
@@ -391,10 +399,14 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const commandPreview = buildCommandPreview(params.command);
 			const patternAnalysis = analyzeCommandPatterns(params.command);
 			const allowPatternSummary = formatAllowPatternSummary(patternAnalysis.patterns);
-			const reusableEntries = patternAnalysis.patterns.map((pattern) => ({
-				pattern,
-				fingerprint: computeFingerprint({ target: params.target, command: pattern }),
-			}));
+			const reusableEntries = patternAnalysis.patterns.map((pattern) => {
+				const fallbackPattern = getFallbackPattern(pattern);
+				return {
+					pattern,
+					fingerprint: computeFingerprint({ target: params.target, command: pattern }),
+					fallbackFingerprint: fallbackPattern ? computeFingerprint({ target: params.target, command: fallbackPattern }) : undefined,
+				};
+			});
 			const reusableFingerprints = reusableEntries.map((entry) => entry.fingerprint);
 			const reusableUnsafe =
 				isReusableUnsafe(params.command, params.cwd) || !patternAnalysis.complete || reusableFingerprints.length === 0;
