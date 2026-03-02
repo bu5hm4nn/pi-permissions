@@ -15,6 +15,7 @@ export async function promptPermission(
 		commandFull?: string;
 		reusableUnsafe: boolean;
 		allowPatternSummary?: string;
+		approvedPatternSummary?: string;
 		missingPatternSummary?: string;
 		analysisComplete?: boolean;
 		domain?: PermissionDomain;
@@ -23,11 +24,11 @@ export async function promptPermission(
 	if (!ctx.hasUI) return "deny";
 	const domain = preview.domain ?? "ssh";
 	const domainLabel = domain === "bash" ? "Bash" : "SSH";
-	const allowLine = preview.allowPatternSummary
-		? `\nAllow for session/project will grant: ${preview.allowPatternSummary}`
+	const approvedLine = preview.approvedPatternSummary
+		? `\nPatterns already approved: ${preview.approvedPatternSummary}`
 		: "";
 	const missingLine = preview.missingPatternSummary
-		? `\nMissing approval(s) for this target: ${preview.missingPatternSummary}`
+		? `\nPatterns requiring approval: ${preview.missingPatternSummary}`
 		: "";
 	const analysisNote = preview.analysisComplete === false
 		? "\n\nNote: Could not fully determine all executable commands. Reusable approvals are disabled for safety."
@@ -39,7 +40,7 @@ export async function promptPermission(
 	const commandText = preview.commandFull && preview.commandFull.trim().length > 0 ? preview.commandFull : preview.commandPreview;
 	const targetLine = domain === "ssh" ? `\nTarget: ${preview.target}` : "";
 	const selected = await ctx.ui.select(
-		`${domainLabel} command requires approval${targetLine}\nCommand: ${commandText}${allowLine}${missingLine}${analysisNote}${unsafeNote}`,
+		`${domainLabel} command requires approval${targetLine}\nCommand: ${commandText}${approvedLine}${missingLine}${analysisNote}${unsafeNote}`,
 		options,
 	);
 	if (!selected) return "deny";

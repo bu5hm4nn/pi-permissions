@@ -72,7 +72,7 @@ Last updated: 2026-02-27
     - [x] Document examples for both domains and safe rollout defaults.
 
 
-- [ ] Improve approval dialog transparency.
+- [x] Improve approval dialog transparency.
   - Show which patterns are already approved vs missing for the target.
   - Keep full command visibility for long commands.
 

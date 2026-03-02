@@ -337,14 +337,18 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		if (result && "promptNeeded" in result && result.promptNeeded && result.fingerprint) {
 			const cmd = String((event.input as any)?.command ?? "");
 			const reusableUnsafe = !result.patternAnalysisComplete || (result.patterns?.length ?? 0) === 0;
-			const allowPatternSummary = formatAllowPatternSummary(result.patterns || []);
+			
+			// For bash tool call guard, all returned patterns are currently missing since it wasn't approved.
+			// In the future this could be more granular, but right now if the guard triggers a prompt,
+			// the entire command chain needs approval.
+			const missingPatternSummary = formatAllowPatternSummary(result.patterns || []);
 
 			const decision = await promptPermission(ctx, {
 				target: "local",
 				commandPreview: result.commandPreview || buildCommandPreview(cmd),
 				commandFull: cmd,
 				reusableUnsafe,
-				allowPatternSummary,
+				missingPatternSummary,
 				domain: "bash",
 			});
 
@@ -437,14 +441,17 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			} else if (!ctx.hasUI) {
 				decision = "deny_no_ui";
 			} else {
-				const missingPatternSummary = formatAllowPatternSummary(approval.missingPatterns || []);
+				const missing = approval.missingPatterns || [];
+				const approved = patternAnalysis.patterns.filter(p => !missing.includes(p));
+				const missingPatternSummary = formatAllowPatternSummary(missing);
+				const approvedPatternSummary = formatAllowPatternSummary(approved);
 				while (true) {
 					const chosen = await promptPermission(ctx, {
 						target: params.target,
 						commandPreview,
 						commandFull: params.command,
 						reusableUnsafe,
-						allowPatternSummary,
+						approvedPatternSummary,
 						missingPatternSummary,
 						analysisComplete: patternAnalysis.complete,
 					});

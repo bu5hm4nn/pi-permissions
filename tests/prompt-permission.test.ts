@@ -19,7 +19,7 @@ test("promptPermission select text includes wget summary example", async () => {
 		target: "dev@example.com",
 		commandPreview: "wget --post-data='x=1' https://api.example.com/items",
 		reusableUnsafe: false,
-		allowPatternSummary: formatAllowPatternSummary(["wget POST *"]),
+		missingPatternSummary: formatAllowPatternSummary(["wget POST *"]),
 	});
 
 	assert.match(capturedText, /wget --post-data=\.\.\. https:\/\/api\.example\.com\/\.\.\./);
@@ -41,7 +41,7 @@ test("promptPermission select text includes URL-scoped pattern summary example",
 		target: "dev@example.com",
 		commandPreview: "curl -X DELETE https://api.admin.org/items/1",
 		reusableUnsafe: false,
-		allowPatternSummary: formatAllowPatternSummary(["curl DELETE https://api.admin.org/*"]),
+		missingPatternSummary: formatAllowPatternSummary(["curl DELETE https://api.admin.org/*"]),
 	});
 
 	assert.match(capturedText, /curl -X DELETE https:\/\/api\.admin\.org\/\.\.\./);
