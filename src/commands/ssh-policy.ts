@@ -2,6 +2,8 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import { analyzeCommandPatterns, getFallbackPattern } from "../policy/command-patterns.ts";
+import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
 import { readPermissionsConfig } from "../policy/store.ts";
 
@@ -88,9 +90,13 @@ function permissionsPanel() {
 	};
 }
 
-function usage(ctx: ExtensionCommandContext, command: "list" | "revoke") {
+function usage(ctx: ExtensionCommandContext, command: "list" | "revoke" | "explain") {
 	if (command === "list") {
 		ctx.ui.notify("Usage: /ssh-policy list [session|project|global|effective]", "error");
+		return;
+	}
+	if (command === "explain") {
+		ctx.ui.notify("Usage: /ssh-policy explain <target> <command>", "error");
 		return;
 	}
 	ctx.ui.notify("Usage: /ssh-policy revoke <session|project|global> <fingerprintPrefix>=8+ hex", "error");
@@ -110,6 +116,12 @@ function formatRows(scope: string, rows: ListRow[]): string {
 
 function isPlaceholderValue(v: string): boolean {
 	return !v || v === "-" || v === "(session)";
+}
+
+function setHasExactOrFallback(fingerprint: string, fallbackFingerprint: string | undefined, set: Set<string>): "exact" | "fallback" | "none" {
+	if (set.has(fingerprint)) return "exact";
+	if (fallbackFingerprint && set.has(fallbackFingerprint)) return "fallback";
+	return "none";
 }
 
 function mergeRows(rows: ListRow[]): ListRow[] {
@@ -244,6 +256,79 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				return;
 			}
 
+			if (cmd === "explain") {
+				const tokens = args.trim().split(/\s+/).filter(Boolean);
+				const target = tokens[1] || "";
+				const command = tokens.slice(2).join(" ");
+				if (!target || !command) {
+					usage(ctx, "explain");
+					return;
+				}
+
+				const analysis = analyzeCommandPatterns(command);
+				const exactFingerprint = computeFingerprint({ target, command });
+				const sessionSet = state.getSessionFingerprints();
+				const global = await state.readGlobal();
+				const trustedProject = await state.isProjectTrusted();
+				const project = trustedProject ? await state.readProject() : emptyPolicyFile();
+				const globalSet = new Set(global.grants.map((g) => g.fingerprint));
+				const projectSet = new Set(project.grants.map((g) => g.fingerprint));
+				const effectiveSet = new Set([...globalSet, ...(trustedProject ? Array.from(projectSet) : []), ...Array.from(sessionSet)]);
+
+				const patternLines = analysis.patterns.map((pattern, idx) => {
+					const fingerprint = computeFingerprint({ target, command: pattern });
+					const fallbackPattern = getFallbackPattern(pattern);
+					const fallbackFingerprint = fallbackPattern ? computeFingerprint({ target, command: fallbackPattern }) : undefined;
+					const approvedIn = (set: Set<string>) => set.has(fingerprint) || (!!fallbackFingerprint && set.has(fallbackFingerprint));
+					const matchType =
+						approvedIn(effectiveSet)
+							? setHasExactOrFallback(fingerprint, fallbackFingerprint, effectiveSet)
+							: "none";
+					return [
+						`${idx + 1}. pattern=${pattern}`,
+						`   fingerprint=${fingerprint}`,
+						fallbackPattern ? `   fallback=${fallbackPattern}` : "   fallback=-",
+						`   approved: session=${approvedIn(sessionSet)} global=${approvedIn(globalSet)} project=${approvedIn(projectSet)} effective=${approvedIn(effectiveSet)} (${matchType})`,
+					].join("\n");
+				});
+
+				const reusableApproved =
+					analysis.patterns.length > 0 &&
+					analysis.patterns.every((pattern) => {
+						const fp = computeFingerprint({ target, command: pattern });
+						const fallback = getFallbackPattern(pattern);
+						const fallbackFp = fallback ? computeFingerprint({ target, command: fallback }) : undefined;
+						return effectiveSet.has(fp) || (!!fallbackFp && effectiveSet.has(fallbackFp));
+					});
+				const exactApproved =
+					sessionSet.has(exactFingerprint) || globalSet.has(exactFingerprint) || (trustedProject && projectSet.has(exactFingerprint));
+				const decisionReason = exactApproved
+					? "exact_fingerprint_approved"
+					: reusableApproved
+						? "all_reusable_patterns_approved"
+						: analysis.patterns.length === 0
+							? "no_patterns_extracted"
+							: "missing_required_patterns";
+
+				ctx.ui.notify(
+					[
+						"Scope: explain",
+						`Target: ${target}`,
+						`Command: ${command}`,
+						`Analysis complete: ${analysis.complete}`,
+						`Exact fingerprint: ${exactFingerprint}`,
+						`Exact approved: ${exactApproved}`,
+						`Reusable approved: ${reusableApproved}`,
+						`Would auto-approve: ${exactApproved || reusableApproved}`,
+						`Decision reason: ${decisionReason}`,
+						"Patterns:",
+						...(patternLines.length > 0 ? patternLines : ["- none"]),
+					].join("\n"),
+					"info",
+				);
+				return;
+			}
+
 			if (cmd === "list") {
 				if (!["session", "project", "global", "effective"].includes(scope)) {
 					usage(ctx, "list");
@@ -319,7 +404,7 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				return;
 			}
 
-			ctx.ui.notify("Usage: /ssh-policy <list|clear|revoke|reload>", "error");
+			ctx.ui.notify("Usage: /ssh-policy <list|clear|revoke|reload|explain>", "error");
 		},
 	});
 }

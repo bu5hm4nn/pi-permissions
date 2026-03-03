@@ -79,7 +79,7 @@ Last updated: 2026-02-27
 - [ ] Add prompt rendering tests.
   - Coverage for `allowPatternSummary`, `missingPatternSummary`, and restricted-option flows.
 
-- [ ] Optional policy explain command.
+- [x] Optional policy explain command.
   - New subcommand idea: `/ssh-policy explain <target> <command>`
   - Output match status, generated patterns, and why auto-approval did/did not happen.
 
