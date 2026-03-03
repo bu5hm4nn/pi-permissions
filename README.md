@@ -1,4 +1,4 @@
-# pi-ssh-permission-extension
+# pi-permissions
 
 A pi extension that adds controlled permission workflows for remote SSH commands (`ssh_bash` tool) and optionally local bash commands, with per-command approvals and safe defaults.
 
@@ -109,7 +109,7 @@ In no-UI mode (non-interactive), only persistent grants (global + trusted projec
 From this repo root:
 
 ```bash
-cd ~/code/pi/pi-ssh-permission-extension
+cd ~/code/pi/pi-permissions
 pi -e ./src/index.ts
 ```
 
