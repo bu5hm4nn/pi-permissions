@@ -7,6 +7,11 @@ import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
 import { readPermissionsConfig, resolveProjectRoot } from "../policy/store.ts";
 
+export interface PermissionsConfigResult {
+	ssh: { enabled: boolean };
+	bash: { enabled: boolean };
+}
+
 export interface PolicyCommandState {
 	getSessionFingerprints: () => Set<string>;
 	clearSession: () => void;
@@ -19,6 +24,16 @@ export interface PolicyCommandState {
 	revokeGlobalByPrefix: (prefix: string) => Promise<{ ok: boolean; message: string }>;
 	revokeProjectByPrefix: (prefix: string) => Promise<{ ok: boolean; message: string }>;
 	reload: () => Promise<void>;
+	/**
+	 * Optional callback to reload the in-memory permissions config after save.
+	 * Called by /permissions command after successful save to ensure live reload.
+	 */
+	reloadPermissionsConfig?: () => Promise<PermissionsConfigResult>;
+	/**
+	 * Optional callback invoked with the new config after reload.
+	 * Allows the extension to update guard runtime state.
+	 */
+	onPermissionsConfigChanged?: (config: PermissionsConfigResult) => void;
 }
 
 interface ListRow {
@@ -173,7 +188,7 @@ function showDeprecationNoticeIfNeeded(ctx: ExtensionCommandContext) {
 
 export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandState) {
 	pi.registerCommand("permissions", {
-		description: "Configure SSH/Bash permissions",
+		description: "Configure Bash permissions",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/permissions requires UI mode", "error");
@@ -186,11 +201,10 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				// Interactive loop for toggling permissions
 				while (true) {
 					// Build menu options showing current state
-					const sshStatus = config.ssh.enabled ? "✓" : "○";
+					// Note: SSH toggle removed - SSH permissions are managed via ssh_bash tool approval flow
 					const bashStatus = config.bash.enabled ? "✓" : "○";
 
 					const choice = await ctx.ui.select("Permissions Configuration", [
-						`[${sshStatus}] SSH permissions (${config.ssh.enabled ? "enabled" : "disabled"})`,
 						`[${bashStatus}] Bash permissions (${config.bash.enabled ? "enabled" : "disabled"})`,
 						"───────────────────",
 						"Save to global (~/.pi/agent/permissions.json)",
@@ -200,12 +214,6 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 
 					if (!choice || choice === "Cancel" || choice.startsWith("───")) {
 						return;
-					}
-
-					// Toggle SSH
-					if (choice.includes("SSH permissions")) {
-						config.ssh.enabled = !config.ssh.enabled;
-						continue; // Re-show menu with updated state
 					}
 
 					// Toggle Bash
@@ -220,6 +228,13 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 							sshEnabled: config.ssh.enabled,
 							bashEnabled: config.bash.enabled,
 						});
+						// Live reload: update in-memory config
+						if (state.reloadPermissionsConfig) {
+							const newConfig = await state.reloadPermissionsConfig();
+							if (state.onPermissionsConfigChanged) {
+								state.onPermissionsConfigChanged(newConfig);
+							}
+						}
 						ctx.ui.notify("Permissions saved to global config", "info");
 						return;
 					}
@@ -230,6 +245,13 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 							sshEnabled: config.ssh.enabled,
 							bashEnabled: config.bash.enabled,
 						});
+						// Live reload: update in-memory config
+						if (state.reloadPermissionsConfig) {
+							const newConfig = await state.reloadPermissionsConfig();
+							if (state.onPermissionsConfigChanged) {
+								state.onPermissionsConfigChanged(newConfig);
+							}
+						}
 						ctx.ui.notify("Permissions saved to project config", "info");
 						return;
 					}

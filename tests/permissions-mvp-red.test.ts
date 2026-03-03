@@ -90,7 +90,7 @@ test("/permissions opens a select menu in UI mode", async () => {
 	assert.equal(selectTitle, "Permissions Configuration", "Expected select title");
 });
 
-test("/permissions select menu shows SSH and Bash toggle options", async () => {
+test("/permissions select menu shows Bash toggle option (SSH removed from UI)", async () => {
 	const commands = registerCommands();
 	const command = commands.get("permissions");
 
@@ -110,12 +110,13 @@ test("/permissions select menu shows SSH and Bash toggle options", async () => {
 
 	await command!.handler("", ctx);
 
+	// SSH toggle has been removed from /permissions UI - SSH is managed via ssh_bash approval flow
 	const hasSSH = capturedOptions.some((opt) => opt.toLowerCase().includes("ssh"));
 	const hasBash = capturedOptions.some((opt) => opt.toLowerCase().includes("bash"));
 	const hasSave = capturedOptions.some((opt) => opt.toLowerCase().includes("save"));
 	const hasCancel = capturedOptions.some((opt) => opt.toLowerCase().includes("cancel"));
 
-	assert.equal(hasSSH, true, "Expected SSH permissions option");
+	assert.equal(hasSSH, false, "SSH toggle should NOT be in /permissions UI");
 	assert.equal(hasBash, true, "Expected Bash permissions option");
 	assert.equal(hasSave, true, "Expected Save option");
 	assert.equal(hasCancel, true, "Expected Cancel option");
@@ -248,7 +249,7 @@ test("/permissions Cancel does not persist settings", async () => {
 	}
 });
 
-test("/permissions toggling SSH updates menu state", async () => {
+test("/permissions toggling Bash updates menu state", async () => {
 	const temp = await setupTempProject();
 	const oldHome = process.env.HOME;
 	process.env.HOME = temp.home;
@@ -267,9 +268,9 @@ test("/permissions toggling SSH updates menu state", async () => {
 				select: async (_title: string, options: string[]) => {
 					capturedOptions.push([...options]);
 					if (capturedOptions.length === 1) {
-						// First call - toggle SSH
-						const sshOption = options.find((o) => o.includes("SSH"));
-						return sshOption;
+						// First call - toggle Bash
+						const bashOption = options.find((o) => o.includes("Bash"));
+						return bashOption;
 					}
 					if (capturedOptions.length === 2) {
 						// Second call - verify toggle happened, then cancel
@@ -285,13 +286,13 @@ test("/permissions toggling SSH updates menu state", async () => {
 		// Should have been called twice (initial + after toggle)
 		assert.equal(capturedOptions.length >= 2, true, "Select should be called at least twice for toggle");
 
-		// First call should show SSH enabled (default)
-		const firstSSH = capturedOptions[0].find((o) => o.includes("SSH"));
-		assert.ok(firstSSH?.includes("✓") || firstSSH?.includes("enabled"), "SSH should start enabled");
+		// First call should show Bash disabled (default)
+		const firstBash = capturedOptions[0].find((o) => o.includes("Bash"));
+		assert.ok(firstBash?.includes("○") || firstBash?.includes("disabled"), "Bash should start disabled");
 
-		// Second call should show SSH disabled (after toggle)
-		const secondSSH = capturedOptions[1].find((o) => o.includes("SSH"));
-		assert.ok(secondSSH?.includes("○") || secondSSH?.includes("disabled"), "SSH should be disabled after toggle");
+		// Second call should show Bash enabled (after toggle)
+		const secondBash = capturedOptions[1].find((o) => o.includes("Bash"));
+		assert.ok(secondBash?.includes("✓") || secondBash?.includes("enabled"), "Bash should be enabled after toggle");
 	} finally {
 		process.env.HOME = oldHome;
 		await rm(temp.root, { recursive: true, force: true });

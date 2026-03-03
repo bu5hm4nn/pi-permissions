@@ -293,13 +293,11 @@ test("/permissions reads existing project config from root when cwd is subdirect
 
 		await command!.handler("", ctx);
 
-		// First menu should show ssh disabled (read from project root)
-		const firstSSH = capturedOptions[0].find((o) => o.includes("SSH"));
-		assert.ok(
-			firstSSH?.includes("○") || firstSSH?.includes("disabled"),
-			`SSH should show as disabled from project root config, got: ${firstSSH}`,
-		);
+		// SSH toggle has been removed from UI - verify it's not shown
+		const hasSSH = capturedOptions[0].some((o) => o.includes("SSH"));
+		assert.equal(hasSSH, false, "SSH toggle should NOT be in /permissions UI");
 
+		// First menu should show bash enabled (read from project root config)
 		const firstBash = capturedOptions[0].find((o) => o.includes("Bash"));
 		assert.ok(
 			firstBash?.includes("✓") || firstBash?.includes("enabled"),

@@ -253,6 +253,16 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const trustedProject = await isProjectTrusted(requirePaths().projectId);
 			if (trustedProject) await readProjectPolicy();
 		},
+		// Live reload callback: reload permissions config from disk
+		reloadPermissionsConfig: async () => {
+			const cwd = paths?.projectRoot ?? process.cwd();
+			permissionsConfig = await readPermissionsConfig(cwd);
+			return permissionsConfig;
+		},
+		// Notification callback: called after config is reloaded
+		onPermissionsConfigChanged: (newConfig) => {
+			permissionsConfig = newConfig;
+		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
