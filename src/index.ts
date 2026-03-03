@@ -5,6 +5,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { registerPolicyCommands } from "./commands/ssh-policy";
 import { analyzeCommandPatterns, formatAllowPatternSummary, getFallbackPattern } from "./policy/command-patterns";
+import { isBashSessionApproved } from "./policy/bash-session-approval";
 import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
 import type { PolicyFile } from "./policy/schema";
 import { emptyPolicyFile } from "./policy/schema";
@@ -313,19 +314,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			bashPermissions: permissionsConfig.bash,
 			hasUI: ctx?.hasUI ?? false,
 			checkBashApproval: async (fingerprint, _domain, patterns) => {
-				// Check session grants first
-				if (bashSessionGrants.has(fingerprint)) {
-					return { approved: true, scope: "session" as const };
-				}
-				
-				const isApproved = (p: string) => {
-					if (bashSessionGrants.has(computeBashFingerprint(p))) return true;
-					const fallback = getFallbackPattern(p);
-					return fallback ? bashSessionGrants.has(computeBashFingerprint(fallback)) : false;
-				};
-
-				// Check reusable pattern fingerprints
-				if (patterns && patterns.length > 0 && patterns.every(isApproved)) {
+				if (isBashSessionApproved({ fingerprint, patterns, bashSessionGrants, hasUI: ctx?.hasUI ?? false })) {
 					return { approved: true, scope: "session" as const };
 				}
 				// TODO: Check project/global policy grants for bash domain
