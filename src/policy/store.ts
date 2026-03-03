@@ -43,7 +43,7 @@ export function resolveStorePaths(startCwd: string): StorePaths {
 	};
 }
 
-async function assertSecurePath(path: string): Promise<void> {
+export async function assertSecurePath(path: string): Promise<void> {
 	const lst = await lstat(path);
 	if (lst.isSymbolicLink()) throw new Error(`Symlink paths are not allowed: ${path}`);
 	const s = await stat(path);
@@ -92,9 +92,25 @@ function secureTmpOpenFlags(): number {
 	return flags;
 }
 
-async function writeAtomicSecure(path: string, data: string): Promise<void> {
+/**
+ * Write data to a file atomically and securely.
+ * - Uses temp file with O_EXCL | O_NOFOLLOW to prevent symlink attacks
+ * - Atomically renames to final path
+ * - Does NOT follow symlinks at final path
+ */
+export async function writeAtomicSecure(path: string, data: string): Promise<void> {
 	const dir = dirname(path);
 	const tmp = join(dir, `.tmp-${process.pid}-${Date.now()}-${randomBytes(8).toString("hex")}`);
+	
+	// Security: Check if target path is a symlink before writing
+	// rename(2) follows symlinks, so we must reject them explicitly
+	if (existsSync(path)) {
+		const lst = await lstat(path);
+		if (lst.isSymbolicLink()) {
+			throw new Error(`Symlink paths are not allowed: ${path}`);
+		}
+	}
+	
 	const file = await open(tmp, secureTmpOpenFlags(), 0o600);
 	try {
 		await file.writeFile(data, { encoding: "utf-8" });

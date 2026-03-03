@@ -457,3 +457,55 @@ test("tool_call guard existing behavior: passes non-ssh commands without bashPer
 
 	assert.equal(result, undefined, "Expected passthrough for non-SSH commands when bashPermissions not set");
 });
+
+// =============================================================================
+// Secure write tests (symlink protection)
+// =============================================================================
+
+test("writeAtomicSecure throws on symlinked target path (security)", async () => {
+	const { writeAtomicSecure } = await import("../src/policy/store.ts");
+	const root = await mkdtemp(join(tmpdir(), "secure-write-test-"));
+	try {
+		// Create a target file to symlink to
+		const targetPath = join(root, "target-file.json");
+		await writeFile(targetPath, '{"should": "not be overwritten"}', { mode: 0o600 });
+
+		// Create directory with symlinked permissions.json
+		const configDir = join(root, "config");
+		await mkdir(configDir, { recursive: true });
+		const symlinkPath = join(configDir, "permissions.json");
+		await symlink(targetPath, symlinkPath);
+
+		// Attempting to write to symlinked path should fail
+		await assert.rejects(
+			async () => {
+				await writeAtomicSecure(symlinkPath, '{"permissions": {}}');
+			},
+			/symlink|ENOENT|EXIST/i,
+			"Should reject writing to symlinked path"
+		);
+
+		// Target file should not be modified
+		const targetContent = await import("node:fs/promises").then(fs => fs.readFile(targetPath, "utf-8"));
+		assert.equal(targetContent, '{"should": "not be overwritten"}', "Target file should not be overwritten");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("writeAtomicSecure writes successfully to non-symlink path", async () => {
+	const { writeAtomicSecure } = await import("../src/policy/store.ts");
+	const root = await mkdtemp(join(tmpdir(), "secure-write-ok-"));
+	try {
+		const configDir = join(root, ".pi");
+		await mkdir(configDir, { recursive: true });
+		const configPath = join(configDir, "permissions.json");
+
+		await writeAtomicSecure(configPath, '{"permissions": {"bash": {"enabled": true}}}');
+
+		const content = await import("node:fs/promises").then(fs => fs.readFile(configPath, "utf-8"));
+		assert.equal(content, '{"permissions": {"bash": {"enabled": true}}}');
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

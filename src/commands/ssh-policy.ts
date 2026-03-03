@@ -1,11 +1,12 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import { analyzeCommandPatterns, getFallbackPattern } from "../policy/command-patterns.ts";
 import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
-import { readPermissionsConfig, resolveProjectRoot, readGlobalPermissionsConfig, readProjectPermissionsConfig } from "../policy/store.ts";
+import { readPermissionsConfig, resolveProjectRoot, readGlobalPermissionsConfig, readProjectPermissionsConfig, writeAtomicSecure, assertSecurePath } from "../policy/store.ts";
 
 export interface PermissionsConfigResult {
 	ssh: { enabled: boolean };
@@ -81,19 +82,35 @@ async function persistPermissionsMvp(scope: "global" | "project", cwd: string, v
 		const projectRoot = resolveProjectRoot(cwd);
 		const projectDir = join(projectRoot, ".pi");
 		const projectPath = join(projectDir, "permissions.json");
+		
+		// Security: Check for symlink before writing
+		if (existsSync(projectPath)) {
+			await assertSecurePath(projectPath);
+		}
+		
+		// Create directory with secure permissions
 		await mkdir(projectDir, { recursive: true, mode: 0o700 });
 		await chmod(projectDir, 0o700);
-		await writeFile(projectPath, JSON.stringify(file, null, 2), { encoding: "utf-8", mode: 0o600 });
-		await chmod(projectPath, 0o600);
+		
+		// Atomic write with symlink protection (O_NOFOLLOW)
+		await writeAtomicSecure(projectPath, JSON.stringify(file, null, 2));
 		return;
 	}
 	const { piDir, agentDir, permissionsPath } = resolveGlobalPermissionsPath();
+	
+	// Security: Check for symlink before writing
+	if (existsSync(permissionsPath)) {
+		await assertSecurePath(permissionsPath);
+	}
+	
+	// Create directories with secure permissions
 	await mkdir(piDir, { recursive: true, mode: 0o700 });
 	await chmod(piDir, 0o700);
 	await mkdir(agentDir, { recursive: true, mode: 0o700 });
 	await chmod(agentDir, 0o700);
-	await writeFile(permissionsPath, JSON.stringify(file, null, 2), { encoding: "utf-8", mode: 0o600 });
-	await chmod(permissionsPath, 0o600);
+	
+	// Atomic write with symlink protection (O_NOFOLLOW)
+	await writeAtomicSecure(permissionsPath, JSON.stringify(file, null, 2));
 }
 
 function permissionsPanel() {
