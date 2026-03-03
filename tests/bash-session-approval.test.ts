@@ -30,3 +30,48 @@ test("UI mode still honors session grant", () => {
 
 	assert.equal(approved, true);
 });
+
+test("incomplete analysis must not auto-approve via reusable pattern grant", () => {
+	const command = "echo hello";
+	const grants = new Set<string>([computeBashFingerprint("echo *")]);
+
+	const approved = isBashSessionApproved({
+		fingerprint: computeBashFingerprint(command),
+		patterns: ["echo *"],
+		bashSessionGrants: grants,
+		hasUI: true,
+		analysisComplete: false,
+	});
+
+	assert.equal(approved, false);
+});
+
+test("incomplete analysis must not auto-approve via fallback session grant", () => {
+	const command = "curl -X POST https://api.example.com/items";
+	const grants = new Set<string>([computeBashFingerprint("curl POST *")]);
+
+	const approved = isBashSessionApproved({
+		fingerprint: computeBashFingerprint(command),
+		patterns: ["curl POST https://api.example.com/items"],
+		bashSessionGrants: grants,
+		hasUI: true,
+		analysisComplete: false,
+	});
+
+	assert.equal(approved, false);
+});
+
+test("complete analysis still auto-approves via reusable pattern grant", () => {
+	const command = "echo hello";
+	const grants = new Set<string>([computeBashFingerprint("echo *")]);
+
+	const approved = isBashSessionApproved({
+		fingerprint: computeBashFingerprint(command),
+		patterns: ["echo *"],
+		bashSessionGrants: grants,
+		hasUI: true,
+		analysisComplete: true,
+	});
+
+	assert.equal(approved, true);
+});

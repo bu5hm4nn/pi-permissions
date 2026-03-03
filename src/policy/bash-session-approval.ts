@@ -6,8 +6,9 @@ export function isBashSessionApproved(input: {
 	patterns?: string[];
 	bashSessionGrants: Set<string>;
 	hasUI: boolean;
+	analysisComplete?: boolean;
 }): boolean {
-	const { fingerprint, patterns, bashSessionGrants, hasUI } = input;
+	const { fingerprint, patterns, bashSessionGrants, hasUI, analysisComplete = true } = input;
 
 	if (!hasUI) {
 		return false;
@@ -23,7 +24,7 @@ export function isBashSessionApproved(input: {
 		return fallback ? bashSessionGrants.has(computeBashFingerprint(fallback)) : false;
 	};
 
-	if (patterns && patterns.length > 0 && patterns.every(isApproved)) {
+	if (analysisComplete && patterns && patterns.length > 0 && patterns.every(isApproved)) {
 		return true;
 	}
 

@@ -313,8 +313,12 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			audit,
 			bashPermissions: permissionsConfig.bash,
 			hasUI: ctx?.hasUI ?? false,
-			checkBashApproval: async (fingerprint, _domain, patterns) => {
-				if (isBashSessionApproved({ fingerprint, patterns, bashSessionGrants, hasUI: ctx?.hasUI ?? false })) {
+			checkBashApproval: async (fingerprint, _domain, patterns, analysisComplete) => {
+				const hasUI = ctx?.hasUI ?? false;
+				if (
+					hasUI &&
+					isBashSessionApproved({ fingerprint, patterns, bashSessionGrants, hasUI, analysisComplete })
+				) {
 					return { approved: true, scope: "session" as const };
 				}
 				// TODO: Check project/global policy grants for bash domain

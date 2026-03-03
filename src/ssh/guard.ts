@@ -23,7 +23,7 @@ export interface GuardRuntime {
 	// Optional bash permissions config
 	bashPermissions?: { enabled: boolean };
 	// Optional callback to check bash command approval
-	checkBashApproval?: (fingerprint: string, domain: string, patterns?: string[]) => Promise<BashApprovalResult>;
+	checkBashApproval?: (fingerprint: string, domain: string, patterns?: string[], analysisComplete?: boolean) => Promise<BashApprovalResult>;
 	// Whether UI is available for prompts
 	hasUI?: boolean;
 }
@@ -60,8 +60,18 @@ export async function handleToolCallGuard(event: any, runtime: GuardRuntime) {
 		const patterns = patternAnalysis.patterns;
 		const commandPreview = buildCommandPreview(cmd);
 
-		const approval = await runtime.checkBashApproval(fingerprint, "bash", patterns);
+		const approval = await runtime.checkBashApproval(fingerprint, "bash", patterns, patternAnalysis.complete);
 		if (approval.approved) {
+			if (!runtime.hasUI && approval.scope === "session") {
+				await runtime.audit?.({
+					event: "tool_call_block",
+					reason: "bash_session_approved_no_ui",
+					commandPreview,
+					fingerprint,
+					patterns,
+				});
+				return { block: true, reason: "Bash command not approved. Enable UI for approval prompts." };
+			}
 			return; // Passthrough
 		}
 
