@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-cod
 import { analyzeCommandPatterns, getFallbackPattern } from "../policy/command-patterns.ts";
 import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
-import { readPermissionsConfig } from "../policy/store.ts";
+import { readPermissionsConfig, resolveProjectRoot } from "../policy/store.ts";
 
 export interface PolicyCommandState {
 	getSessionFingerprints: () => Set<string>;
@@ -62,7 +62,9 @@ function resolveGlobalPermissionsPath(): { piDir: string; agentDir: string; perm
 async function persistPermissionsMvp(scope: "global" | "project", cwd: string, values: { sshEnabled?: unknown; bashEnabled?: unknown }) {
 	const file = toPermissionsMvpFile(values);
 	if (scope === "project") {
-		const projectDir = join(cwd, ".pi");
+		// Resolve project root (git root) to ensure consistent path regardless of cwd
+		const projectRoot = resolveProjectRoot(cwd);
+		const projectDir = join(projectRoot, ".pi");
 		const projectPath = join(projectDir, "permissions.json");
 		await mkdir(projectDir, { recursive: true, mode: 0o700 });
 		await chmod(projectDir, 0o700);

@@ -177,7 +177,9 @@ async function readSecurePermissionsFile(path: string): Promise<PermissionsFile 
 export async function readPermissionsConfig(projectDir: string): Promise<PermissionsConfigResult> {
 	const home = process.env.HOME || homedir();
 	const globalPath = join(home, ".pi", "agent", "permissions.json");
-	const projectPath = join(projectDir, ".pi", "permissions.json");
+	// Resolve project root (git root) to ensure consistent path regardless of cwd
+	const projectRoot = resolveProjectRoot(projectDir);
+	const projectPath = join(projectRoot, ".pi", "permissions.json");
 
 	// Defaults: ssh enabled, bash disabled
 	const result: PermissionsConfigResult = {
