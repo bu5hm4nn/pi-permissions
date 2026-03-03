@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -101,6 +101,62 @@ test("readPermissionsConfig reads project permissions.json and merges with globa
 		// Project overrides global
 		assert.equal(config.ssh.enabled, false);
 		assert.equal(config.bash.enabled, true);
+	} finally {
+		process.env.HOME = oldHome;
+		await env.cleanup();
+	}
+});
+
+test("readPermissionsConfig ignores insecure global permissions.json (group/world writable)", async () => {
+	const { readPermissionsConfig } = await import("../src/policy/store.ts");
+	const env = await setupTempEnv();
+	const oldHome = process.env.HOME;
+	process.env.HOME = env.home;
+	try {
+		const globalDir = join(env.home, ".pi", "agent");
+		await mkdir(globalDir, { recursive: true, mode: 0o700 });
+		const globalConfigPath = join(globalDir, "permissions.json");
+		await writeFile(
+			globalConfigPath,
+			JSON.stringify({
+				version: 1,
+				permissions: { ssh: { enabled: false }, bash: { enabled: true } },
+			}),
+			{ mode: 0o600 },
+		);
+		await chmod(globalConfigPath, 0o622);
+
+		const config = await readPermissionsConfig(env.project);
+		assert.equal(config.ssh.enabled, true, "Insecure global config should be ignored");
+		assert.equal(config.bash.enabled, false, "Insecure global config should be ignored");
+	} finally {
+		process.env.HOME = oldHome;
+		await env.cleanup();
+	}
+});
+
+test("readPermissionsConfig ignores symlinked project permissions.json", async () => {
+	const { readPermissionsConfig } = await import("../src/policy/store.ts");
+	const env = await setupTempEnv();
+	const oldHome = process.env.HOME;
+	process.env.HOME = env.home;
+	try {
+		const projectDir = join(env.project, ".pi");
+		await mkdir(projectDir, { recursive: true, mode: 0o700 });
+		const targetPath = join(env.project, "permissions-target.json");
+		await writeFile(
+			targetPath,
+			JSON.stringify({
+				version: 1,
+				permissions: { ssh: { enabled: false }, bash: { enabled: true } },
+			}),
+			{ mode: 0o600 },
+		);
+		await symlink(targetPath, join(projectDir, "permissions.json"));
+
+		const config = await readPermissionsConfig(env.project);
+		assert.equal(config.ssh.enabled, true, "Symlinked project config should be ignored");
+		assert.equal(config.bash.enabled, false, "Symlinked project config should be ignored");
 	} finally {
 		process.env.HOME = oldHome;
 		await env.cleanup();
@@ -327,6 +383,25 @@ test("bash guard blocks unapproved commands in no-UI mode", async () => {
 
 	const result = await handleToolCallGuard(
 		{ toolName: "bash", input: { command: "rm -rf /" } },
+		runtime,
+	);
+
+	assert.deepEqual(result, { block: true, reason: "Bash command not approved. Enable UI for approval prompts." });
+});
+
+
+test("bash guard blocks approved commands in no-UI mode", async () => {
+	const { handleToolCallGuard } = await import("../src/ssh/guard.ts");
+	const runtime = {
+		guardHealthy: true,
+		matchDirectSsh: () => false,
+		bashPermissions: { enabled: true },
+		checkBashApproval: async () => ({ approved: true, scope: "session" as const }),
+		hasUI: false,
+	};
+
+	const result = await handleToolCallGuard(
+		{ toolName: "bash", input: { command: "echo should-block" } },
 		runtime,
 	);
 

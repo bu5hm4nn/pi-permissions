@@ -167,6 +167,13 @@ interface PermissionsFile {
 	};
 }
 
+async function readSecurePermissionsFile(path: string): Promise<PermissionsFile | undefined> {
+	if (!existsSync(path)) return undefined;
+	await assertSecurePath(path);
+	const raw = await readFile(path, "utf-8");
+	return JSON.parse(raw) as PermissionsFile;
+}
+
 export async function readPermissionsConfig(projectDir: string): Promise<PermissionsConfigResult> {
 	const home = process.env.HOME || homedir();
 	const globalPath = join(home, ".pi", "agent", "permissions.json");
@@ -180,15 +187,12 @@ export async function readPermissionsConfig(projectDir: string): Promise<Permiss
 
 	// Try reading global config
 	try {
-		if (existsSync(globalPath)) {
-			const raw = await readFile(globalPath, "utf-8");
-			const parsed = JSON.parse(raw) as PermissionsFile;
-			if (parsed?.permissions?.ssh?.enabled !== undefined) {
-				result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
-			}
-			if (parsed?.permissions?.bash?.enabled !== undefined) {
-				result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
-			}
+		const parsed = await readSecurePermissionsFile(globalPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
 		}
 	} catch {
 		// Ignore errors reading global config
@@ -196,15 +200,12 @@ export async function readPermissionsConfig(projectDir: string): Promise<Permiss
 
 	// Try reading project config (overrides global)
 	try {
-		if (existsSync(projectPath)) {
-			const raw = await readFile(projectPath, "utf-8");
-			const parsed = JSON.parse(raw) as PermissionsFile;
-			if (parsed?.permissions?.ssh?.enabled !== undefined) {
-				result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
-			}
-			if (parsed?.permissions?.bash?.enabled !== undefined) {
-				result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
-			}
+		const parsed = await readSecurePermissionsFile(projectPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
 		}
 	} catch {
 		// Ignore errors reading project config

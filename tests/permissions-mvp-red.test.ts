@@ -136,6 +136,7 @@ test("/permissions Save to global persists settings", async () => {
 		await writeFile(
 			join(piDir, "permissions.json"),
 			JSON.stringify({ version: 1, permissions: { ssh: { enabled: false }, bash: { enabled: true } } }),
+			{ mode: 0o600 },
 		);
 
 		let selectCount = 0;
