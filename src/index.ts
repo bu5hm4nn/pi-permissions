@@ -4,15 +4,18 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { registerPolicyCommands } from "./commands/ssh-policy";
-import { analyzeCommandPatterns, formatAllowPatternSummary } from "./policy/command-patterns";
-import { buildCommandPreview, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
+import { analyzeCommandPatterns, formatAllowPatternSummary, getFallbackPattern } from "./policy/command-patterns";
+import { isBashSessionApproved } from "./policy/bash-session-approval";
+import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
 import type { PolicyFile } from "./policy/schema";
 import { emptyPolicyFile } from "./policy/schema";
 import {
+	readPermissionsConfig,
 	readPolicy,
 	removeGrantByPrefix,
 	resolveStorePaths,
 	type StorePaths,
+	type PermissionsConfigResult,
 	upsertGrant,
 	writePolicy,
 } from "./policy/store";
@@ -42,7 +45,9 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 	const directSshMatcher = options?.directSshMatcher ?? isDirectSshFamilyCommand;
 	let paths: StorePaths | null = null;
 	let sessionGrants = new Set<string>();
+	let bashSessionGrants = new Set<string>();
 	let guardHealthy = true;
+	let permissionsConfig: PermissionsConfigResult = { ssh: { enabled: true }, bash: { enabled: false } };
 
 	const auditPath = join(process.env.HOME || "", ".pi", "agent", "ssh-policy-audit.log");
 
@@ -166,18 +171,22 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 
 	async function getApprovalFromPolicies(
 		exactFingerprint: string,
-		reusableEntries: Array<{ fingerprint: string; pattern: string }>,
+		reusableEntries: Array<{ fingerprint: string; pattern: string; fallbackFingerprint?: string }>,
 		hasUI: boolean,
+		analysisComplete: boolean = true,
 	): Promise<{
 		approved: boolean;
 		scope: "none" | "session" | "project" | "global";
 		policyError?: string;
 		missingPatterns?: string[];
 	}> {
-		const reusableFingerprints = reusableEntries.map((e) => e.fingerprint);
+		const isApprovedInSet = (entry: { fingerprint: string; fallbackFingerprint?: string }, set: Set<string>) =>
+			set.has(entry.fingerprint) || (entry.fallbackFingerprint !== undefined && set.has(entry.fallbackFingerprint));
+
 		const sessionApprovedExact = hasUI && sessionGrants.has(exactFingerprint);
+		// Only use reusable patterns when analysis is complete
 		const sessionApprovedReusableOnly =
-			hasUI && reusableFingerprints.length > 0 && reusableFingerprints.every((fingerprint) => sessionGrants.has(fingerprint));
+			hasUI && analysisComplete && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionGrants));
 		try {
 			const global = await readGlobalPolicy();
 			const trustedProject = await isProjectTrusted(requirePaths().projectId);
@@ -191,20 +200,21 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const sessionEffective = new Set(sessionGrants);
 			for (const fp of persistentEffective) sessionEffective.add(fp);
 
+			// Only use reusable patterns when analysis is complete
 			const reusableSatisfiedBySession =
-				hasUI && reusableFingerprints.length > 0 && reusableFingerprints.every((fingerprint) => sessionEffective.has(fingerprint));
+				hasUI && analysisComplete && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionEffective));
 			const reusableSatisfiedByPersistent =
-				reusableFingerprints.length > 0 && reusableFingerprints.every((fingerprint) => persistentEffective.has(fingerprint));
+				analysisComplete && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, persistentEffective));
 
 			if (sessionApprovedExact || reusableSatisfiedBySession) return { approved: true, scope: "session" };
 			if (globalSet.has(exactFingerprint)) return { approved: true, scope: "global" };
 			if (trustedProject && projectSet.has(exactFingerprint)) return { approved: true, scope: "project" };
 			if (reusableSatisfiedByPersistent) {
-				const hasProjectComponent = trustedProject && reusableFingerprints.some((fingerprint) => projectSet.has(fingerprint));
+				const hasProjectComponent = trustedProject && reusableEntries.some((entry) => isApprovedInSet(entry, projectSet));
 				return { approved: true, scope: hasProjectComponent ? "project" : "global" };
 			}
 			const missingPatterns = reusableEntries
-				.filter((entry) => !sessionEffective.has(entry.fingerprint))
+				.filter((entry) => !isApprovedInSet(entry, sessionEffective))
 				.map((entry) => entry.pattern);
 			return { approved: false, scope: "none", missingPatterns };
 		} catch (e) {
@@ -246,17 +256,36 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const trustedProject = await isProjectTrusted(requirePaths().projectId);
 			if (trustedProject) await readProjectPolicy();
 		},
+		// Live reload callback: reload permissions config from disk
+		reloadPermissionsConfig: async () => {
+			const cwd = paths?.projectRoot ?? process.cwd();
+			permissionsConfig = await readPermissionsConfig(cwd);
+			return permissionsConfig;
+		},
+		// Notification callback: called after config is reloaded
+		onPermissionsConfigChanged: (newConfig) => {
+			permissionsConfig = newConfig;
+		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		sessionGrants = new Set();
+		bashSessionGrants = new Set();
 		try {
 			paths = await runStartupSelfCheck(ctx.cwd);
 			guardHealthy = true;
+			// Load permissions config
+			try {
+				permissionsConfig = await readPermissionsConfig(ctx.cwd);
+			} catch {
+				// Use defaults if config read fails
+				permissionsConfig = { ssh: { enabled: true }, bash: { enabled: false } };
+			}
 			ctx.ui.setStatus("ssh-policy", ctx.ui.theme.fg("accent", "ssh-permission: active"));
 		} catch (e) {
 			guardHealthy = false;
 			paths = null;
+			permissionsConfig = { ssh: { enabled: true }, bash: { enabled: false } };
 			ctx.ui.setStatus("ssh-policy", ctx.ui.theme.fg("error", "ssh-permission: fail-closed"));
 			ctx.ui.notify(`ssh-permission startup self-check failed: ${e instanceof Error ? e.message : String(e)}`, "error");
 		}
@@ -264,6 +293,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 
 	const clearSessionGrants = () => {
 		sessionGrants = new Set();
+		bashSessionGrants = new Set();
 	};
 
 	const clearSessionGrantsOnBoundary = (event?: { reason?: unknown }) => {
@@ -289,12 +319,66 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		clearSessionGrantsOnBoundary(event);
 	});
 
-	pi.on("tool_call", async (event) => {
-		return handleToolCallGuard(event, {
+	pi.on("tool_call", async (event, ctx) => {
+		const result = await handleToolCallGuard(event, {
 			guardHealthy,
 			matchDirectSsh: directSshMatcher,
 			audit,
+			bashPermissions: permissionsConfig.bash,
+			hasUI: ctx?.hasUI ?? false,
+			checkBashApproval: async (fingerprint, _domain, patterns, analysisComplete) => {
+				const hasUI = ctx?.hasUI ?? false;
+				if (
+					hasUI &&
+					isBashSessionApproved({ fingerprint, patterns, bashSessionGrants, hasUI, analysisComplete })
+				) {
+					return { approved: true, scope: "session" as const };
+				}
+				// TODO: Check project/global policy grants for bash domain
+				return { approved: false, scope: "none" as const };
+			},
 		});
+
+		// Handle promptNeeded for bash commands
+		if (result && "promptNeeded" in result && result.promptNeeded && result.fingerprint) {
+			const cmd = String((event.input as any)?.command ?? "");
+			const reusableUnsafe = !result.patternAnalysisComplete || (result.patterns?.length ?? 0) === 0;
+			
+			// For bash tool call guard, all returned patterns are currently missing since it wasn't approved.
+			// In the future this could be more granular, but right now if the guard triggers a prompt,
+			// the entire command chain needs approval.
+			const missingPatternSummary = formatAllowPatternSummary(result.patterns || []);
+
+			const decision = await promptPermission(ctx, {
+				target: "local",
+				commandPreview: result.commandPreview || buildCommandPreview(cmd),
+				commandFull: cmd,
+				reusableUnsafe,
+				missingPatternSummary,
+				domain: "bash",
+			});
+
+			if (decision === "deny") {
+				await audit({
+					event: "bash_tool_call_block",
+					reason: "user_denied",
+					commandPreview: result.commandPreview,
+					fingerprint: result.fingerprint,
+				});
+				return { block: true, reason: "Blocked by user" };
+			}
+
+			if (decision === "allow_session" && !reusableUnsafe) {
+				for (const pattern of result.patterns || []) {
+					bashSessionGrants.add(computeBashFingerprint(pattern));
+				}
+			}
+
+			// allow_once or allow_session: proceed (return undefined to allow)
+			return undefined;
+		}
+
+		return result;
 	});
 
 	pi.on("user_bash", async (event) => {
@@ -325,10 +409,14 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const commandPreview = buildCommandPreview(params.command);
 			const patternAnalysis = analyzeCommandPatterns(params.command);
 			const allowPatternSummary = formatAllowPatternSummary(patternAnalysis.patterns);
-			const reusableEntries = patternAnalysis.patterns.map((pattern) => ({
-				pattern,
-				fingerprint: computeFingerprint({ target: params.target, command: pattern }),
-			}));
+			const reusableEntries = patternAnalysis.patterns.map((pattern) => {
+				const fallbackPattern = getFallbackPattern(pattern);
+				return {
+					pattern,
+					fingerprint: computeFingerprint({ target: params.target, command: pattern }),
+					fallbackFingerprint: fallbackPattern ? computeFingerprint({ target: params.target, command: fallbackPattern }) : undefined,
+				};
+			});
 			const reusableFingerprints = reusableEntries.map((entry) => entry.fingerprint);
 			const reusableUnsafe =
 				isReusableUnsafe(params.command, params.cwd) || !patternAnalysis.complete || reusableFingerprints.length === 0;
@@ -336,7 +424,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			let decision: PermissionDecision | "auto_allow_policy" | "deny_no_ui" = "deny";
 			let decisionScope: "none" | "session" | "project" | "global" = "none";
 
-			const approval = await getApprovalFromPolicies(fingerprint, reusableEntries, ctx.hasUI);
+			const approval = await getApprovalFromPolicies(fingerprint, reusableEntries, ctx.hasUI, patternAnalysis.complete);
 			if (approval.approved) {
 				decision = "auto_allow_policy";
 				decisionScope = approval.scope;
@@ -359,14 +447,17 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			} else if (!ctx.hasUI) {
 				decision = "deny_no_ui";
 			} else {
-				const missingPatternSummary = formatAllowPatternSummary(approval.missingPatterns || []);
+				const missing = approval.missingPatterns || [];
+				const approved = patternAnalysis.patterns.filter(p => !missing.includes(p));
+				const missingPatternSummary = formatAllowPatternSummary(missing);
+				const approvedPatternSummary = formatAllowPatternSummary(approved);
 				while (true) {
 					const chosen = await promptPermission(ctx, {
 						target: params.target,
 						commandPreview,
 						commandFull: params.command,
 						reusableUnsafe,
-						allowPatternSummary,
+						approvedPatternSummary,
 						missingPatternSummary,
 						analysisComplete: patternAnalysis.complete,
 					});

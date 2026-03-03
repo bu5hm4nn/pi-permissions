@@ -1,6 +1,7 @@
 {
-  "name": "pi-ssh-permission-extension",
+  "name": "pi-permissions",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "keywords": [

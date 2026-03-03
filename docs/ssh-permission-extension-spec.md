@@ -274,12 +274,18 @@ Where:
 4. Build effective set:
    - interactive: `session ∪ global ∪ trustedProject`
    - no-UI: `global ∪ trustedProject`
-5. If fingerprint exists in effective set → execute (`auto_allow_policy`).
-6. If no-UI and not approved → deny (`deny_no_ui`).
-7. If interactive and not approved:
+5. **Pattern-based approval**: if command has extractable patterns:
+   - Extract command patterns (e.g., `curl POST https://api.example.com/items` → `curl POST https://api.example.com/items`).
+   - Compute fingerprint for each pattern.
+   - If all pattern fingerprints exist in effective set → execute (`auto_allow_policy`).
+   - If any pattern fingerprint is missing → proceed to prompt.
+   - **Fallback equivalence**: Commands with URL-scoped patterns (curl/wget mutating methods) may have a fallback pattern (e.g., `curl POST *`). If the fallback fingerprint is approved, the URL-scoped command is also considered approved. This enables approving broad patterns like `curl POST *` to cover specific URLs.
+6. If fingerprint exists in effective set → execute (`auto_allow_policy`).
+7. If no-UI and not approved → deny (`deny_no_ui`).
+8. If interactive and not approved:
    - show select with 4 options.
    - dialog cancel/timeout => `Deny`.
-8. Apply decision:
+9. Apply decision:
    - once: execute
    - session:
      - if `reusableUnsafe`, reject selection and re-prompt
@@ -291,7 +297,32 @@ Where:
        - if trust denied/cancelled, deny with no trust/grant writes
        - if trusted, persist grant then execute
    - deny: block
-9. Any persistence/parse error on an unapproved command => deny (fail closed).
+10. Any persistence/parse error on an unapproved command => deny (fail closed).
+
+---
+
+## 10) Pattern-based approval
+
+### Intent
+Commands like `curl -X POST https://api.example.com/items` contain extractable patterns (`curl POST https://api.example.com/items`). Users can pre-approve these patterns for reusable approvals instead of approving each exact command fingerprint.
+
+### Pattern extraction
+- Parse command to extract executable and arguments.
+- For curl/wget with method verbs (GET, POST, PUT, DELETE, PATCH), extract `<method> <url>` pattern.
+- For other commands, extract simplified pattern representation.
+- Commands may return multiple patterns (e.g., compound commands).
+- Extraction may fail (incomplete analysis) – in this case, pattern-based approval is not available.
+
+### URL-scoped patterns
+- Mutating HTTP methods (POST, PUT, DELETE, PATCH) produce URL-scoped patterns: `curl POST https://api.example.com/items`.
+- Safe methods (GET, HEAD) produce broad patterns: `curl GET *`.
+- URLs are canonicalized (protocol + hostname + port + pathname, no credentials/params/hash).
+
+### Fallback equivalence
+- URL-scoped patterns have a fallback pattern: `curl POST https://api.example.com/items` → fallback `curl POST *`.
+- If the fallback fingerprint is approved, the URL-scoped command is also considered approved.
+- This allows users to approve broad patterns like `curl POST *` once, covering all POST requests.
+- Security: fallback equivalence only applies when pattern analysis is complete (`complete=true`).
 
 ---
 

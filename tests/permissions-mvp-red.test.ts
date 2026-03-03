@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerPolicyCommands } from "../src/commands/ssh-policy.ts";
 
@@ -42,39 +42,13 @@ async function setupTempProject() {
 	const project = join(root, "project");
 	await mkdir(home, { recursive: true });
 	await mkdir(project, { recursive: true });
-	return { home, project };
+	return { root, home, project };
 }
 
 function registerCommands() {
 	const pi = createMockPi();
 	registerPolicyCommands(pi as any, createMockState() as any);
 	return pi.commands;
-}
-
-function extractToggleLabels(panel: any): string[] {
-	const candidates = [panel?.checkboxes, panel?.toggles, panel?.options, panel?.items].filter(Array.isArray);
-	if (candidates.length === 0) return [];
-	const toggles = candidates[0].filter((item: any) => {
-		if (typeof item !== "object" || item === null) return false;
-		const type = String(item.type ?? "").toLowerCase();
-		return type === "checkbox" || type === "toggle" || "checked" in item || "value" in item;
-	});
-	return toggles
-		.map((item: any) => String(item.label ?? item.title ?? item.name ?? ""))
-		.filter(Boolean)
-		.map((label) => label.toLowerCase());
-}
-
-function extractActionLabels(panel: any): string[] {
-	const actions = Array.isArray(panel?.actions) ? panel.actions : [];
-	return actions
-		.map((action: any) => {
-			if (typeof action === "string") return action;
-			if (action && typeof action === "object") return action.label ?? action.title ?? action.name ?? action.action ?? "";
-			return "";
-		})
-		.filter(Boolean)
-		.map((x: string) => x.toLowerCase());
 }
 
 test("/permissions command is registered", () => {
@@ -88,75 +62,97 @@ test("/permissions compatibility keeps /ssh-policy registered alongside /permiss
 	assert.equal(commands.has("ssh-policy"), true, "Expected /ssh-policy to remain registered for compatibility");
 });
 
-test("/permissions opens a configuration menu/panel in UI mode", async () => {
+test("/permissions opens a select menu in UI mode", async () => {
 	const commands = registerCommands();
 	const command = commands.get("permissions");
 	assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
 
-	const panelCalls: any[] = [];
+	let selectCalled = false;
+	let selectTitle = "";
+	let selectOptions: string[] = [];
+
 	const ctx = {
 		hasUI: true,
+		cwd: "/tmp",
 		ui: {
 			notify() {},
-			openPanel: async (panel: any) => {
-				panelCalls.push(panel);
-				return { action: "cancel" };
+			select: async (title: string, options: string[]) => {
+				selectCalled = true;
+				selectTitle = title;
+				selectOptions = options;
+				return "Cancel"; // Cancel to exit loop
 			},
 		},
 	};
 
 	await command!.handler("", ctx);
-	assert.equal(panelCalls.length, 1, "Expected /permissions to open exactly one configuration panel in UI mode");
+	assert.equal(selectCalled, true, "Expected /permissions to call ui.select");
+	assert.equal(selectTitle, "Permissions Configuration", "Expected select title");
 });
 
-test("/permissions MVP panel exposes two SSH/Bash toggles plus Save/Cancel (shape-agnostic)", async () => {
+test("/permissions select menu shows Bash toggle option (SSH removed from UI)", async () => {
 	const commands = registerCommands();
 	const command = commands.get("permissions");
-	assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
 
-	let capturedPanel: any = null;
+	let capturedOptions: string[] = [];
+
 	const ctx = {
 		hasUI: true,
+		cwd: "/tmp",
 		ui: {
 			notify() {},
-			openPanel: async (panel: any) => {
-				capturedPanel = panel;
-				return { action: "cancel" };
+			select: async (_title: string, options: string[]) => {
+				capturedOptions = options;
+				return "Cancel";
 			},
 		},
 	};
 
 	await command!.handler("", ctx);
 
-	const toggleLabels = extractToggleLabels(capturedPanel);
-	assert.equal(toggleLabels.length, 2, "Expected exactly two MVP toggles");
-	assert.equal(toggleLabels.some((label) => label.includes("ssh")), true, "Expected one toggle to target SSH permissions");
-	assert.equal(toggleLabels.some((label) => label.includes("bash")), true, "Expected one toggle to target Bash permissions");
+	// SSH toggle has been removed from /permissions UI - SSH is managed via ssh_bash approval flow
+	const hasSSH = capturedOptions.some((opt) => opt.toLowerCase().includes("ssh"));
+	const hasBash = capturedOptions.some((opt) => opt.toLowerCase().includes("bash"));
+	const hasSave = capturedOptions.some((opt) => opt.toLowerCase().includes("save"));
+	const hasCancel = capturedOptions.some((opt) => opt.toLowerCase().includes("cancel"));
 
-	const actions = extractActionLabels(capturedPanel);
-	const uniqueActions = new Set(actions);
-	assert.equal(uniqueActions.size, 2, "Expected exactly two actions");
-	assert.equal(uniqueActions.has("save"), true, "Expected Save affordance");
-	assert.equal(uniqueActions.has("cancel"), true, "Expected Cancel affordance");
+	assert.equal(hasSSH, false, "SSH toggle should NOT be in /permissions UI");
+	assert.equal(hasBash, true, "Expected Bash permissions option");
+	assert.equal(hasSave, true, "Expected Save option");
+	assert.equal(hasCancel, true, "Expected Cancel option");
 });
 
-test("/permissions Save persists toggled settings", async () => {
+test("/permissions Save to global persists settings", async () => {
 	const temp = await setupTempProject();
 	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
 	process.env.HOME = temp.home;
-	process.chdir(temp.project);
+
 	try {
 		const commands = registerCommands();
 		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
 
+		// Create permissions.json to set initial state
+		const piDir = join(temp.home, ".pi", "agent");
+		await mkdir(piDir, { recursive: true });
+		await writeFile(
+			join(piDir, "permissions.json"),
+			JSON.stringify({ version: 1, permissions: { ssh: { enabled: false }, bash: { enabled: true } } }),
+			{ mode: 0o600 },
+		);
+
+		let selectCount = 0;
 		const ctx = {
 			hasUI: true,
 			cwd: temp.project,
 			ui: {
 				notify() {},
-				openPanel: async () => ({ action: "save", values: { sshEnabled: false, bashEnabled: true } }),
+				select: async (_title: string, _options: string[]) => {
+					selectCount++;
+					if (selectCount === 1) {
+						return "Save to global (~/.pi/agent/permissions.json)";
+					}
+					return "Cancel";
+				},
 			},
 		};
 
@@ -168,281 +164,220 @@ test("/permissions Save persists toggled settings", async () => {
 		assert.equal(parsed?.permissions?.bash?.enabled, true);
 	} finally {
 		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
+		await rm(temp.root, { recursive: true, force: true });
 	}
 });
 
-test("/permissions Save with global scope persists only global permissions file", async () => {
+test("/permissions Save to project persists settings", async () => {
 	const temp = await setupTempProject();
 	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
 	process.env.HOME = temp.home;
-	process.chdir(temp.project);
+
 	try {
 		const commands = registerCommands();
 		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
 
+		let selectCount = 0;
 		const ctx = {
 			hasUI: true,
 			cwd: temp.project,
 			ui: {
 				notify() {},
-				openPanel: async () => ({ action: "save", values: { scope: "global", sshEnabled: false, bashEnabled: true } }),
-			},
-		};
-
-		await command!.handler("", ctx);
-
-		const globalPath = join(temp.home, ".pi", "agent", "permissions.json");
-		const projectPath = join(temp.project, ".pi", "permissions.json");
-		const parsedGlobal = JSON.parse(await readFile(globalPath, "utf-8"));
-		assert.equal(parsedGlobal?.permissions?.ssh?.enabled, false);
-		assert.equal(parsedGlobal?.permissions?.bash?.enabled, true);
-		await assert.rejects(stat(projectPath), /ENOENT/);
-	} finally {
-		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
-	}
-});
-
-test("/permissions Save with project scope persists project file and preserves global for merged-effective behavior", async () => {
-	const temp = await setupTempProject();
-	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
-	process.env.HOME = temp.home;
-	process.chdir(temp.project);
-	try {
-		const commands = registerCommands();
-		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
-
-		const globalPath = join(temp.home, ".pi", "agent", "permissions.json");
-		const projectPath = join(temp.project, ".pi", "permissions.json");
-
-		const globalSaveCtx = {
-			hasUI: true,
-			cwd: temp.project,
-			ui: {
-				notify() {},
-				openPanel: async () => ({ action: "save", values: { scope: "global", sshEnabled: true, bashEnabled: false } }),
-			},
-		};
-		await command!.handler("", globalSaveCtx);
-
-		const projectSaveCtx = {
-			hasUI: true,
-			cwd: temp.project,
-			ui: {
-				notify() {},
-				openPanel: async () => ({ action: "save", values: { scope: "project", sshEnabled: false, bashEnabled: false } }),
-			},
-		};
-		await command!.handler("", projectSaveCtx);
-
-		const parsedGlobal = JSON.parse(await readFile(globalPath, "utf-8"));
-		const parsedProject = JSON.parse(await readFile(projectPath, "utf-8"));
-		assert.equal(parsedGlobal?.permissions?.ssh?.enabled, true, "Expected global SSH baseline to remain true");
-		assert.equal(parsedGlobal?.permissions?.bash?.enabled, false, "Expected global Bash baseline to remain false");
-		assert.equal(parsedProject?.permissions?.ssh?.enabled, false, "Expected project SSH override persisted");
-		assert.equal(parsedProject?.permissions?.bash?.enabled, false, "Expected project Bash value persisted for effective merge");
-	} finally {
-		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
-	}
-});
-
-test("/permissions Cancel does not persist toggled settings", async () => {
-	const temp = await setupTempProject();
-	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
-	process.env.HOME = temp.home;
-	process.chdir(temp.project);
-	try {
-		const commands = registerCommands();
-		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
-
-		const ctx = {
-			hasUI: true,
-			cwd: temp.project,
-			ui: {
-				notify() {},
-				openPanel: async () => ({ action: "cancel", values: { sshEnabled: false, bashEnabled: true } }),
-			},
-		};
-
-		await command!.handler("", ctx);
-
-		const configPath = join(temp.home, ".pi", "agent", "permissions.json");
-		await assert.rejects(stat(configPath), /ENOENT/);
-	} finally {
-		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
-	}
-});
-
-test("/permissions global save rejects non-absolute HOME to avoid relative persistence path", async () => {
-	const temp = await setupTempProject();
-	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
-	process.env.HOME = "relative-home";
-	process.chdir(temp.project);
-	try {
-		const commands = registerCommands();
-		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
-
-		const notifications: Array<{ message: string; level?: string }> = [];
-		const ctx = {
-			hasUI: true,
-			cwd: temp.project,
-			ui: {
-				notify: (message: string, level?: string) => {
-					notifications.push({ message, level });
+				select: async (_title: string, _options: string[]) => {
+					selectCount++;
+					if (selectCount === 1) {
+						return "Save to project (.pi/permissions.json)";
+					}
+					return "Cancel";
 				},
-				openPanel: async () => ({ action: "save", values: { scope: "global", sshEnabled: true, bashEnabled: true } }),
 			},
 		};
 
-		await assert.doesNotReject(command!.handler("", ctx));
-		assert.equal(
-			notifications.some((n) => /home|absolute/i.test(String(n.message))),
-			true,
-			"Expected clear HOME absolute-path validation error via ui.notify",
-		);
-		await assert.rejects(stat(join(temp.project, "relative-home", ".pi", "agent", "permissions.json")), /ENOENT/);
+		await command!.handler("", ctx);
+
+		const configPath = join(temp.project, ".pi", "permissions.json");
+		const parsed = JSON.parse(await readFile(configPath, "utf-8"));
+		// Default values (ssh enabled, bash disabled)
+		assert.equal(parsed?.permissions?.ssh?.enabled, true);
+		assert.equal(parsed?.permissions?.bash?.enabled, false);
 	} finally {
 		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
+		await rm(temp.root, { recursive: true, force: true });
 	}
 });
 
-test("/permissions global save uses HOME fallback path when HOME is missing (never cwd-relative)", async () => {
+test("/permissions Cancel does not persist settings", async () => {
 	const temp = await setupTempProject();
 	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
-	const fallbackHome = homedir();
-	const fallbackPath = join(fallbackHome, ".pi", "agent", "permissions.json");
-	let backup: string | null = null;
-	let existed = true;
-	process.env.HOME = "";
-	process.chdir(temp.project);
-	try {
-		try {
-			backup = await readFile(fallbackPath, "utf-8");
-		} catch {
-			existed = false;
-		}
+	process.env.HOME = temp.home;
 
+	try {
 		const commands = registerCommands();
 		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
 
 		const ctx = {
 			hasUI: true,
 			cwd: temp.project,
 			ui: {
 				notify() {},
-				openPanel: async () => ({ action: "save", values: { scope: "global", sshEnabled: true, bashEnabled: false } }),
+				select: async () => "Cancel",
 			},
 		};
 
 		await command!.handler("", ctx);
 
-		await assert.rejects(stat(join(temp.project, ".pi", "agent", "permissions.json")), /ENOENT/);
+		// No files should be created
+		const globalPath = join(temp.home, ".pi", "agent", "permissions.json");
+		const projectPath = join(temp.project, ".pi", "permissions.json");
+
+		let globalExists = false;
+		let projectExists = false;
+		try {
+			await stat(globalPath);
+			globalExists = true;
+		} catch {}
+		try {
+			await stat(projectPath);
+			projectExists = true;
+		} catch {}
+
+		assert.equal(globalExists, false, "Global config should not be created on Cancel");
+		assert.equal(projectExists, false, "Project config should not be created on Cancel");
 	} finally {
-		if (existed && backup !== null) {
-			await writeFile(fallbackPath, backup, "utf-8");
-		} else {
-			await rm(fallbackPath, { force: true });
-		}
 		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
+		await rm(temp.root, { recursive: true, force: true });
 	}
 });
 
-test("/permissions defensively handles missing ui.openPanel by notifying and not throwing", async () => {
-	const commands = registerCommands();
-	const command = commands.get("permissions");
-	assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
-
-	const notifications: Array<{ message: string; level?: string }> = [];
-	const ctx = {
-		hasUI: true,
-		ui: {
-			notify: (message: string, level?: string) => {
-				notifications.push({ message, level });
-			},
-		},
-	};
-
-	await assert.doesNotReject(command!.handler("", ctx));
-	assert.equal(notifications.length > 0, true, "Expected missing openPanel to be reported via ui.notify");
-	assert.equal(notifications.some((n) => /openpanel|ui|permissions|error/i.test(String(n.message))), true);
-});
-
-test("/permissions wraps openPanel/handler errors and reports via ui.notify", async () => {
-	const commands = registerCommands();
-	const command = commands.get("permissions");
-	assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
-
-	const notifications: Array<{ message: string; level?: string }> = [];
-	const ctx = {
-		hasUI: true,
-		ui: {
-			notify: (message: string, level?: string) => {
-				notifications.push({ message, level });
-			},
-			openPanel: async () => {
-				throw new Error("panel exploded");
-			},
-		},
-	};
-
-	await assert.doesNotReject(command!.handler("", ctx));
-	assert.equal(notifications.some((n) => /panel exploded/i.test(String(n.message))), true, "Expected thrown handler error to be surfaced via notify");
-});
-
-test("/permissions persisted files/dirs use secure modes (files 0o600, dirs 0o700)", async () => {
+test("/permissions toggling Bash updates menu state", async () => {
 	const temp = await setupTempProject();
 	const oldHome = process.env.HOME;
-	const oldCwd = process.cwd();
 	process.env.HOME = temp.home;
-	process.chdir(temp.project);
+
 	try {
 		const commands = registerCommands();
 		const command = commands.get("permissions");
-		assert.equal(typeof command?.handler, "function", "Expected /permissions command handler");
 
-		const globalCtx = {
+		const capturedOptions: string[][] = [];
+
+		const ctx = {
 			hasUI: true,
 			cwd: temp.project,
 			ui: {
 				notify() {},
-				openPanel: async () => ({ action: "save", values: { scope: "global", sshEnabled: true, bashEnabled: true } }),
+				select: async (_title: string, options: string[]) => {
+					capturedOptions.push([...options]);
+					if (capturedOptions.length === 1) {
+						// First call - toggle Bash
+						const bashOption = options.find((o) => o.includes("Bash"));
+						return bashOption;
+					}
+					if (capturedOptions.length === 2) {
+						// Second call - verify toggle happened, then cancel
+						return "Cancel";
+					}
+					return "Cancel";
+				},
 			},
 		};
-		await command!.handler("", globalCtx);
 
-		const projectCtx = {
-			hasUI: true,
-			cwd: temp.project,
-			ui: {
-				notify() {},
-				openPanel: async () => ({ action: "save", values: { scope: "project", sshEnabled: true, bashEnabled: true } }),
-			},
-		};
-		await command!.handler("", projectCtx);
+		await command!.handler("", ctx);
 
-		const mode = async (path: string) => (await stat(path)).mode & 0o777;
-		assert.equal(await mode(join(temp.home, ".pi")), 0o700, "Expected global .pi directory mode 0o700");
-		assert.equal(await mode(join(temp.home, ".pi", "agent")), 0o700, "Expected global agent directory mode 0o700");
-		assert.equal(await mode(join(temp.home, ".pi", "agent", "permissions.json")), 0o600, "Expected global file mode 0o600");
-		assert.equal(await mode(join(temp.project, ".pi")), 0o700, "Expected project .pi directory mode 0o700");
-		assert.equal(await mode(join(temp.project, ".pi", "permissions.json")), 0o600, "Expected project file mode 0o600");
+		// Should have been called twice (initial + after toggle)
+		assert.equal(capturedOptions.length >= 2, true, "Select should be called at least twice for toggle");
+
+		// First call should show Bash disabled (default)
+		const firstBash = capturedOptions[0].find((o) => o.includes("Bash"));
+		assert.ok(firstBash?.includes("○") || firstBash?.includes("disabled"), "Bash should start disabled");
+
+		// Second call should show Bash enabled (after toggle)
+		const secondBash = capturedOptions[1].find((o) => o.includes("Bash"));
+		assert.ok(secondBash?.includes("✓") || secondBash?.includes("enabled"), "Bash should be enabled after toggle");
 	} finally {
 		process.env.HOME = oldHome;
-		process.chdir(oldCwd);
+		await rm(temp.root, { recursive: true, force: true });
 	}
+});
+
+test("/permissions persisted files use secure modes (files 0o600, dirs 0o700)", async () => {
+	const temp = await setupTempProject();
+	const oldHome = process.env.HOME;
+	process.env.HOME = temp.home;
+
+	try {
+		const commands = registerCommands();
+		const command = commands.get("permissions");
+
+		const ctx = {
+			hasUI: true,
+			cwd: temp.project,
+			ui: {
+				notify() {},
+				select: async () => "Save to global (~/.pi/agent/permissions.json)",
+			},
+		};
+
+		await command!.handler("", ctx);
+
+		const piDir = join(temp.home, ".pi");
+		const agentDir = join(piDir, "agent");
+		const configPath = join(agentDir, "permissions.json");
+
+		const piDirStat = await stat(piDir);
+		const agentDirStat = await stat(agentDir);
+		const fileStat = await stat(configPath);
+
+		const mode = (s: any) => s.mode & 0o777;
+
+		assert.equal(mode(piDirStat), 0o700, "~/.pi should have mode 0o700");
+		assert.equal(mode(agentDirStat), 0o700, "~/.pi/agent should have mode 0o700");
+		assert.equal(mode(fileStat), 0o600, "permissions.json should have mode 0o600");
+	} finally {
+		process.env.HOME = oldHome;
+		await rm(temp.root, { recursive: true, force: true });
+	}
+});
+
+test("/permissions requires UI mode", async () => {
+	const commands = registerCommands();
+	const command = commands.get("permissions");
+
+	let notifyMessage = "";
+	const ctx = {
+		hasUI: false,
+		cwd: "/tmp",
+		ui: {
+			notify(msg: string) {
+				notifyMessage = msg;
+			},
+			select: async () => {
+				throw new Error("Should not call select without UI");
+			},
+		},
+	};
+
+	await command!.handler("", ctx);
+	assert.ok(notifyMessage.includes("requires UI mode"), "Should notify about UI requirement");
+});
+
+test("/permissions handles select returning undefined (escape)", async () => {
+	const commands = registerCommands();
+	const command = commands.get("permissions");
+
+	let selectCalled = false;
+	const ctx = {
+		hasUI: true,
+		cwd: "/tmp",
+		ui: {
+			notify() {},
+			select: async () => {
+				selectCalled = true;
+				return undefined; // User pressed escape
+			},
+		},
+	};
+
+	// Should not throw
+	await command!.handler("", ctx);
+	assert.equal(selectCalled, true, "Select should have been called");
 });

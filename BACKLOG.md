@@ -14,7 +14,7 @@ Last updated: 2026-02-27
 2. [x] Add cross-analyzer consistency corpus.
 3. [x] Decide and execute migration from `DIRECT_SSH_PARSE_FAILURE_MODE="compat"` to `"strict"`.
 4. [x] Epic kickoff: URL-specific matching for destructive curl methods (spec + failing tests).
-5. [ ] Implement curl URL-scoped destructive-method patterns + approval compatibility.
+5. [x] Implement curl URL-scoped destructive-method patterns + approval compatibility.
 6. [x] Epic kickoff: wget method matrix + failing tests.
 7. [x] Implement wget analyzer integration + parity tests.
 8. [ ] Real-world integration testing in controlled environment and capture findings.
@@ -64,22 +64,22 @@ Last updated: 2026-02-27
       - Advanced subcommands (`status|list|clear|reload|mode`) deferred until after panel MVP.
     - [x] Add strict TDD tests for `/permissions` panel open/render + checkbox state transitions. (RED: failing tests added in `tests/permissions-mvp-red.test.ts`)
     - [x] Introduce policy store schema/version update for config + dual-domain grants.
-    - [ ] Add guard path for regular `bash` permissions (shared analyzer pipeline, domain-tagged fingerprints).
-    - [ ] Reuse/extend prompt messaging to clearly indicate domain (`ssh` vs `bash`) and allow-pattern summary.
-    - [ ] Add migration compatibility for existing `ssh-policy` files/commands.
-    - [ ] Keep `/ssh-policy` as compatibility alias (deprecation warning + mapped behavior).
-    - [ ] Add integration tests for no-UI behavior and fail-closed semantics in `bash` domain.
-    - [ ] Document examples for both domains and safe rollout defaults.
+    - [x] Add guard path for regular `bash` permissions (shared analyzer pipeline, domain-tagged fingerprints).
+    - [x] Reuse/extend prompt messaging to clearly indicate domain (`ssh` vs `bash`) and allow-pattern summary.
+    - [x] Add migration compatibility for existing `ssh-policy` files/commands.
+    - [x] Keep `/ssh-policy` as compatibility alias (deprecation warning + mapped behavior).
+    - [x] Add integration tests for no-UI behavior and fail-closed semantics in `bash` domain.
+    - [x] Document examples for both domains and safe rollout defaults.
 
 
-- [ ] Improve approval dialog transparency.
+- [x] Improve approval dialog transparency.
   - Show which patterns are already approved vs missing for the target.
   - Keep full command visibility for long commands.
 
 - [ ] Add prompt rendering tests.
   - Coverage for `allowPatternSummary`, `missingPatternSummary`, and restricted-option flows.
 
-- [ ] Optional policy explain command.
+- [x] Optional policy explain command.
   - New subcommand idea: `/ssh-policy explain <target> <command>`
   - Output match status, generated patterns, and why auto-approval did/did not happen.
 
@@ -92,13 +92,13 @@ Last updated: 2026-02-27
   - Suggested pattern format: `curl POST api.example.com/*` (or equivalent canonical host/path scope).
   - Keep GET behavior broad unless explicitly configured otherwise.
   - Implementable chunks:
-    - [ ] Define URL canonicalization spec for permissions (scheme handling, host case-folding, default ports, path normalization, query handling).
+    - [x] Define URL canonicalization spec for permissions (scheme handling, host case-folding, default ports, path normalization, query handling).
     - [x] Add failing tests for curl URL extraction + canonicalization in analyzer unit tests.
     - [x] Extend `src/shell/analyzers/curl-patterns.ts` to emit host/path-scoped patterns for destructive methods.
     - [x] Keep existing `curl GET *` behavior as default and add tests proving no regression.
-    - [ ] Update pattern union/approval checks in `src/index.ts` (if needed) to support new URL-scoped pattern matching.
-    - [ ] Update prompt summaries to display URL-scoped patterns clearly (and add prompt rendering tests).
-    - [ ] Add migration/compat handling for existing stored `curl METHOD *` approvals (backward compatibility strategy).
+    - [x] Update pattern union/approval checks in `src/index.ts` (if needed) to support new URL-scoped pattern matching.
+    - [x] Update prompt summaries to display URL-scoped patterns clearly (and add prompt rendering tests).
+    - [x] Add migration/compat handling for existing stored `curl METHOD *` approvals (backward compatibility strategy).
     - [ ] Add integration tests covering multi-command chains with mixed curl hosts/methods.
 
 - [ ] Epic: Add wget analyzer with method-aware matching similar to curl.

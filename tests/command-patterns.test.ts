@@ -152,15 +152,15 @@ test("distinguishes wget methods", () => {
 
 	const postData = analyzeCommandPatterns("wget --post-data='x=1' https://api.example.com/items");
 	assert.equal(postData.complete, true);
-	assert.deepEqual(postData.patterns, ["wget POST *"]);
+	assert.deepEqual(postData.patterns, ["wget POST https://api.example.com/items"]);
 
 	const postMethod = analyzeCommandPatterns("wget --method=POST --body-data='x=1' https://api.example.com/items");
 	assert.equal(postMethod.complete, true);
-	assert.deepEqual(postMethod.patterns, ["wget POST *"]);
+	assert.deepEqual(postMethod.patterns, ["wget POST https://api.example.com/items"]);
 
 	const deleteMethod = analyzeCommandPatterns("wget --method=DELETE https://api.example.com/items/1");
 	assert.equal(deleteMethod.complete, true);
-	assert.deepEqual(deleteMethod.patterns, ["wget DELETE *"]);
+	assert.deepEqual(deleteMethod.patterns, ["wget DELETE https://api.example.com/items/1"]);
 });
 
 test("does not fallback to broad wget pattern when method parsing is incomplete", () => {
@@ -182,7 +182,7 @@ test("keeps curl+wget method parity in mixed command chains", () => {
 		"curl -X DELETE https://api.example.com/v1/items/1 && wget --method=DELETE https://api.example.com/v1/items/2",
 	);
 	assert.equal(analysis.complete, true);
-	assert.deepEqual(new Set(analysis.patterns), new Set(["curl DELETE https://api.example.com/v1/items/1", "wget DELETE *"]));
+	assert.deepEqual(new Set(analysis.patterns), new Set(["curl DELETE https://api.example.com/v1/items/1", "wget DELETE https://api.example.com/v1/items/2"]));
 });
 
 test("formats wget summaries with user-facing method examples", () => {
@@ -191,6 +191,20 @@ test("formats wget summaries with user-facing method examples", () => {
 
 	const deleteSummary = formatAllowPatternSummary(["wget DELETE *"]);
 	assert.equal(deleteSummary, '"wget DELETE *" (e.g., wget --method=DELETE https://api.example.com/...)');
+
+	const urlScopedSummary = formatAllowPatternSummary(["wget POST https://api.example.com/v1/*"]);
+	assert.equal(urlScopedSummary, '"wget POST https://api.example.com/v1/*" (e.g., wget --post-data=... https://api.example.com/v1/...)');
+});
+
+test("formats curl summaries with user-facing method examples", () => {
+	const postSummary = formatAllowPatternSummary(["curl POST *"]);
+	assert.equal(postSummary, '"curl POST *" (e.g., curl -X POST https://api.example.com/...)');
+
+	const deleteSummary = formatAllowPatternSummary(["curl DELETE *"]);
+	assert.equal(deleteSummary, '"curl DELETE *" (e.g., curl -X DELETE https://api.example.com/...)');
+
+	const urlScopedSummary = formatAllowPatternSummary(["curl POST https://api.example.com/v1/*"]);
+	assert.equal(urlScopedSummary, '"curl POST https://api.example.com/v1/*" (e.g., curl -X POST https://api.example.com/v1/...)');
 });
 
 test("marks analysis incomplete when command is dynamic", () => {

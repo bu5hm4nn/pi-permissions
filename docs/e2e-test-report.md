@@ -1,7 +1,7 @@
 # E2E Test Report
 
 Date: 2026-02-26
-Repo: `~/code/pi/pi-ssh-permission-extension`
+Repo: `~/code/pi/pi-permissions`
 Extension entry: `src/index.ts`
 Mode used: `pi --mode json -e ./src/index.ts --no-session`
 

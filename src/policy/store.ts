@@ -43,7 +43,7 @@ export function resolveStorePaths(startCwd: string): StorePaths {
 	};
 }
 
-async function assertSecurePath(path: string): Promise<void> {
+export async function assertSecurePath(path: string): Promise<void> {
 	const lst = await lstat(path);
 	if (lst.isSymbolicLink()) throw new Error(`Symlink paths are not allowed: ${path}`);
 	const s = await stat(path);
@@ -92,9 +92,25 @@ function secureTmpOpenFlags(): number {
 	return flags;
 }
 
-async function writeAtomicSecure(path: string, data: string): Promise<void> {
+/**
+ * Write data to a file atomically and securely.
+ * - Uses temp file with O_EXCL | O_NOFOLLOW to prevent symlink attacks
+ * - Atomically renames to final path
+ * - Does NOT follow symlinks at final path
+ */
+export async function writeAtomicSecure(path: string, data: string): Promise<void> {
 	const dir = dirname(path);
 	const tmp = join(dir, `.tmp-${process.pid}-${Date.now()}-${randomBytes(8).toString("hex")}`);
+	
+	// Security: Check if target path is a symlink before writing
+	// rename(2) follows symlinks, so we must reject them explicitly
+	if (existsSync(path)) {
+		const lst = await lstat(path);
+		if (lst.isSymbolicLink()) {
+			throw new Error(`Symlink paths are not allowed: ${path}`);
+		}
+	}
+	
 	const file = await open(tmp, secureTmpOpenFlags(), 0o600);
 	try {
 		await file.writeFile(data, { encoding: "utf-8" });
@@ -152,4 +168,124 @@ export function removeGrantByPrefix(policy: PolicyFile, prefix: string): { polic
 		matches,
 		policy: { ...policy, updatedAt: new Date().toISOString(), grants: next },
 	};
+}
+
+export interface PermissionsConfigResult {
+	ssh: { enabled: boolean };
+	bash: { enabled: boolean };
+}
+
+interface PermissionsFile {
+	version: number;
+	permissions?: {
+		ssh?: { enabled?: boolean };
+		bash?: { enabled?: boolean };
+	};
+}
+
+async function readSecurePermissionsFile(path: string): Promise<PermissionsFile | undefined> {
+	if (!existsSync(path)) return undefined;
+	await assertSecurePath(path);
+	const raw = await readFile(path, "utf-8");
+	return JSON.parse(raw) as PermissionsFile;
+}
+
+export async function readPermissionsConfig(projectDir: string): Promise<PermissionsConfigResult> {
+	const home = process.env.HOME || homedir();
+	const globalPath = join(home, ".pi", "agent", "permissions.json");
+	// Resolve project root (git root) to ensure consistent path regardless of cwd
+	const projectRoot = resolveProjectRoot(projectDir);
+	const projectPath = join(projectRoot, ".pi", "permissions.json");
+
+	// Defaults: ssh enabled, bash disabled
+	const result: PermissionsConfigResult = {
+		ssh: { enabled: true },
+		bash: { enabled: false },
+	};
+
+	// Try reading global config
+	try {
+		const parsed = await readSecurePermissionsFile(globalPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
+		}
+	} catch {
+		// Ignore errors reading global config
+	}
+
+	// Try reading project config (overrides global)
+	try {
+		const parsed = await readSecurePermissionsFile(projectPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
+		}
+	} catch {
+		// Ignore errors reading project config
+	}
+
+	return result;
+}
+
+/**
+ * Read only the global permissions config (ignoring project overrides).
+ * Used by /permissions when saving to global scope.
+ */
+export async function readGlobalPermissionsConfig(): Promise<PermissionsConfigResult> {
+	const home = process.env.HOME || homedir();
+	const globalPath = join(home, ".pi", "agent", "permissions.json");
+
+	// Defaults: ssh enabled, bash disabled
+	const result: PermissionsConfigResult = {
+		ssh: { enabled: true },
+		bash: { enabled: false },
+	};
+
+	try {
+		const parsed = await readSecurePermissionsFile(globalPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
+		}
+	} catch {
+		// Ignore errors reading global config
+	}
+
+	return result;
+}
+
+/**
+ * Read only the project permissions config (ignoring global).
+ * Used by /permissions when saving to project scope.
+ */
+export async function readProjectPermissionsConfig(projectDir: string): Promise<PermissionsConfigResult> {
+	const projectRoot = resolveProjectRoot(projectDir);
+	const projectPath = join(projectRoot, ".pi", "permissions.json");
+
+	// Defaults: ssh enabled, bash disabled
+	const result: PermissionsConfigResult = {
+		ssh: { enabled: true },
+		bash: { enabled: false },
+	};
+
+	try {
+		const parsed = await readSecurePermissionsFile(projectPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
+		}
+	} catch {
+		// Ignore errors reading project config
+	}
+
+	return result;
 }

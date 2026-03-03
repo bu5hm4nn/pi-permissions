@@ -1,7 +1,7 @@
 # AGENTS.md — Project Handoff Notes
 
 ## Project
-`pi-ssh-permission-extension`
+`pi-permissions`
 
 Goal: a pi extension that provides `ssh_bash` with per-command approvals and blocks direct SSH-family access outside the tool.
 

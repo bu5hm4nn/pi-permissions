@@ -1,8 +1,17 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import { analyzeCommandPatterns, getFallbackPattern } from "../policy/command-patterns.ts";
+import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
+import { readPermissionsConfig, resolveProjectRoot, readGlobalPermissionsConfig, readProjectPermissionsConfig, writeAtomicSecure, assertSecurePath } from "../policy/store.ts";
+
+export interface PermissionsConfigResult {
+	ssh: { enabled: boolean };
+	bash: { enabled: boolean };
+}
 
 export interface PolicyCommandState {
 	getSessionFingerprints: () => Set<string>;
@@ -16,6 +25,16 @@ export interface PolicyCommandState {
 	revokeGlobalByPrefix: (prefix: string) => Promise<{ ok: boolean; message: string }>;
 	revokeProjectByPrefix: (prefix: string) => Promise<{ ok: boolean; message: string }>;
 	reload: () => Promise<void>;
+	/**
+	 * Optional callback to reload the in-memory permissions config after save.
+	 * Called by /permissions command after successful save to ensure live reload.
+	 */
+	reloadPermissionsConfig?: () => Promise<PermissionsConfigResult>;
+	/**
+	 * Optional callback invoked with the new config after reload.
+	 * Allows the extension to update guard runtime state.
+	 */
+	onPermissionsConfigChanged?: (config: PermissionsConfigResult) => void;
 }
 
 interface ListRow {
@@ -59,21 +78,39 @@ function resolveGlobalPermissionsPath(): { piDir: string; agentDir: string; perm
 async function persistPermissionsMvp(scope: "global" | "project", cwd: string, values: { sshEnabled?: unknown; bashEnabled?: unknown }) {
 	const file = toPermissionsMvpFile(values);
 	if (scope === "project") {
-		const projectDir = join(cwd, ".pi");
+		// Resolve project root (git root) to ensure consistent path regardless of cwd
+		const projectRoot = resolveProjectRoot(cwd);
+		const projectDir = join(projectRoot, ".pi");
 		const projectPath = join(projectDir, "permissions.json");
+		
+		// Security: Check for symlink before writing
+		if (existsSync(projectPath)) {
+			await assertSecurePath(projectPath);
+		}
+		
+		// Create directory with secure permissions
 		await mkdir(projectDir, { recursive: true, mode: 0o700 });
 		await chmod(projectDir, 0o700);
-		await writeFile(projectPath, JSON.stringify(file, null, 2), { encoding: "utf-8", mode: 0o600 });
-		await chmod(projectPath, 0o600);
+		
+		// Atomic write with symlink protection (O_NOFOLLOW)
+		await writeAtomicSecure(projectPath, JSON.stringify(file, null, 2));
 		return;
 	}
 	const { piDir, agentDir, permissionsPath } = resolveGlobalPermissionsPath();
+	
+	// Security: Check for symlink before writing
+	if (existsSync(permissionsPath)) {
+		await assertSecurePath(permissionsPath);
+	}
+	
+	// Create directories with secure permissions
 	await mkdir(piDir, { recursive: true, mode: 0o700 });
 	await chmod(piDir, 0o700);
 	await mkdir(agentDir, { recursive: true, mode: 0o700 });
 	await chmod(agentDir, 0o700);
-	await writeFile(permissionsPath, JSON.stringify(file, null, 2), { encoding: "utf-8", mode: 0o600 });
-	await chmod(permissionsPath, 0o600);
+	
+	// Atomic write with symlink protection (O_NOFOLLOW)
+	await writeAtomicSecure(permissionsPath, JSON.stringify(file, null, 2));
 }
 
 function permissionsPanel() {
@@ -87,9 +124,13 @@ function permissionsPanel() {
 	};
 }
 
-function usage(ctx: ExtensionCommandContext, command: "list" | "revoke") {
+function usage(ctx: ExtensionCommandContext, command: "list" | "revoke" | "explain") {
 	if (command === "list") {
 		ctx.ui.notify("Usage: /ssh-policy list [session|project|global|effective]", "error");
+		return;
+	}
+	if (command === "explain") {
+		ctx.ui.notify("Usage: /ssh-policy explain <target> <command>", "error");
 		return;
 	}
 	ctx.ui.notify("Usage: /ssh-policy revoke <session|project|global> <fingerprintPrefix>=8+ hex", "error");
@@ -109,6 +150,12 @@ function formatRows(scope: string, rows: ListRow[]): string {
 
 function isPlaceholderValue(v: string): boolean {
 	return !v || v === "-" || v === "(session)";
+}
+
+function setHasExactOrFallback(fingerprint: string, fallbackFingerprint: string | undefined, set: Set<string>): "exact" | "fallback" | "none" {
+	if (set.has(fingerprint)) return "exact";
+	if (fallbackFingerprint && set.has(fallbackFingerprint)) return "fallback";
+	return "none";
 }
 
 function mergeRows(rows: ListRow[]): ListRow[] {
@@ -136,26 +183,102 @@ async function doClear(scope: string, state: PolicyCommandState, ctx: ExtensionC
 	ctx.ui.notify(`Cleared ${scope} policy scope`, "info");
 }
 
+// Deprecation warning shown once per session
+let sshPolicyDeprecationShown = false;
+
+/**
+ * Reset deprecation flag (for testing purposes only)
+ */
+export function resetSshPolicyDeprecationFlag() {
+	sshPolicyDeprecationShown = false;
+}
+
+function showDeprecationNoticeIfNeeded(ctx: ExtensionCommandContext) {
+	if (!sshPolicyDeprecationShown) {
+		sshPolicyDeprecationShown = true;
+		ctx.ui.notify(
+			"/ssh-policy is deprecated. Use /permissions for a unified permissions panel.",
+			"warning"
+		);
+	}
+}
+
 export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandState) {
 	pi.registerCommand("permissions", {
-		description: "Configure SSH/Bash permissions",
+		description: "Configure Bash permissions",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/permissions requires UI mode", "error");
 				return;
 			}
 			try {
-				const openPanel = (ctx.ui as any).openPanel;
-				if (typeof openPanel !== "function") {
-					ctx.ui.notify("/permissions requires ui.openPanel availability", "error");
-					return;
+				const cwd = ctx.cwd || process.cwd();
+				// Show effective config (merged) for display purposes
+				const effectiveConfig = await readPermissionsConfig(cwd);
+
+				// Track the user's intended toggle state
+				let intendedBashEnabled = effectiveConfig.bash.enabled;
+
+				// Interactive loop for toggling permissions
+				while (true) {
+					// Build menu options showing current intended state
+					// Note: SSH toggle removed - SSH permissions are managed via ssh_bash tool approval flow
+					const bashStatus = intendedBashEnabled ? "✓" : "○";
+
+					const choice = await ctx.ui.select("Permissions Configuration", [
+						`[${bashStatus}] Bash permissions (${intendedBashEnabled ? "enabled" : "disabled"})`,
+						"───────────────────",
+						"Save to global (~/.pi/agent/permissions.json)",
+						"Save to project (.pi/permissions.json)",
+						"Cancel",
+					]);
+
+					if (!choice || choice === "Cancel" || choice.startsWith("───")) {
+						return;
+					}
+
+					// Toggle Bash
+					if (choice.includes("Bash permissions")) {
+						intendedBashEnabled = !intendedBashEnabled;
+						continue; // Re-show menu with updated state
+					}
+
+					// Save to global - read global-only config, apply bash change, persist
+					if (choice.includes("global")) {
+						const globalConfig = await readGlobalPermissionsConfig();
+						await persistPermissionsMvp("global", cwd, {
+							sshEnabled: globalConfig.ssh.enabled,
+							bashEnabled: intendedBashEnabled,
+						});
+						// Live reload: update in-memory config
+						if (state.reloadPermissionsConfig) {
+							const newConfig = await state.reloadPermissionsConfig();
+							if (state.onPermissionsConfigChanged) {
+								state.onPermissionsConfigChanged(newConfig);
+							}
+						}
+						ctx.ui.notify("Permissions saved to global config", "info");
+						return;
+					}
+
+					// Save to project - read project-only config, apply bash change, persist
+					if (choice.includes("project")) {
+						const projectConfig = await readProjectPermissionsConfig(cwd);
+						await persistPermissionsMvp("project", cwd, {
+							sshEnabled: projectConfig.ssh.enabled,
+							bashEnabled: intendedBashEnabled,
+						});
+						// Live reload: update in-memory config
+						if (state.reloadPermissionsConfig) {
+							const newConfig = await state.reloadPermissionsConfig();
+							if (state.onPermissionsConfigChanged) {
+								state.onPermissionsConfigChanged(newConfig);
+							}
+						}
+						ctx.ui.notify("Permissions saved to project config", "info");
+						return;
+					}
 				}
-				const result = await openPanel(permissionsPanel());
-				if (!result || String(result.action || "").toLowerCase() !== "save") return;
-				const values = (result && typeof result === "object" ? (result as any).values : null) || {};
-				const scope = values.scope === "project" ? "project" : "global";
-				const cwd = (ctx as any).cwd || process.cwd();
-				await persistPermissionsMvp(scope, cwd, values);
 			} catch (e) {
 				ctx.ui.notify(`Failed to handle /permissions: ${e instanceof Error ? e.message : String(e)}`, "error");
 			}
@@ -163,8 +286,11 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 	});
 
 	pi.registerCommand("ssh-policy", {
-		description: "Manage ssh permission policy (list|clear|revoke|reload)",
+		description: "Manage ssh permission policy (list|clear|revoke|reload) [deprecated: use /permissions]",
 		handler: async (args, ctx) => {
+			// Show deprecation notice before any output
+			showDeprecationNoticeIfNeeded(ctx);
+
 			const [cmd = "list", scope = "effective", prefix] = args.trim().split(/\s+/).filter(Boolean);
 
 			if (cmd === "reload") {
@@ -174,6 +300,79 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				} catch (e) {
 					ctx.ui.notify(`Reload failed: ${e instanceof Error ? e.message : String(e)}`, "error");
 				}
+				return;
+			}
+
+			if (cmd === "explain") {
+				const tokens = args.trim().split(/\s+/).filter(Boolean);
+				const target = tokens[1] || "";
+				const command = tokens.slice(2).join(" ");
+				if (!target || !command) {
+					usage(ctx, "explain");
+					return;
+				}
+
+				const analysis = analyzeCommandPatterns(command);
+				const exactFingerprint = computeFingerprint({ target, command });
+				const sessionSet = state.getSessionFingerprints();
+				const global = await state.readGlobal();
+				const trustedProject = await state.isProjectTrusted();
+				const project = trustedProject ? await state.readProject() : emptyPolicyFile();
+				const globalSet = new Set(global.grants.map((g) => g.fingerprint));
+				const projectSet = new Set(project.grants.map((g) => g.fingerprint));
+				const effectiveSet = new Set([...globalSet, ...(trustedProject ? Array.from(projectSet) : []), ...Array.from(sessionSet)]);
+
+				const patternLines = analysis.patterns.map((pattern, idx) => {
+					const fingerprint = computeFingerprint({ target, command: pattern });
+					const fallbackPattern = getFallbackPattern(pattern);
+					const fallbackFingerprint = fallbackPattern ? computeFingerprint({ target, command: fallbackPattern }) : undefined;
+					const approvedIn = (set: Set<string>) => set.has(fingerprint) || (!!fallbackFingerprint && set.has(fallbackFingerprint));
+					const matchType =
+						approvedIn(effectiveSet)
+							? setHasExactOrFallback(fingerprint, fallbackFingerprint, effectiveSet)
+							: "none";
+					return [
+						`${idx + 1}. pattern=${pattern}`,
+						`   fingerprint=${fingerprint}`,
+						fallbackPattern ? `   fallback=${fallbackPattern}` : "   fallback=-",
+						`   approved: session=${approvedIn(sessionSet)} global=${approvedIn(globalSet)} project=${approvedIn(projectSet)} effective=${approvedIn(effectiveSet)} (${matchType})`,
+					].join("\n");
+				});
+
+				const reusableApproved =
+					analysis.patterns.length > 0 &&
+					analysis.patterns.every((pattern) => {
+						const fp = computeFingerprint({ target, command: pattern });
+						const fallback = getFallbackPattern(pattern);
+						const fallbackFp = fallback ? computeFingerprint({ target, command: fallback }) : undefined;
+						return effectiveSet.has(fp) || (!!fallbackFp && effectiveSet.has(fallbackFp));
+					});
+				const exactApproved =
+					sessionSet.has(exactFingerprint) || globalSet.has(exactFingerprint) || (trustedProject && projectSet.has(exactFingerprint));
+				const decisionReason = exactApproved
+					? "exact_fingerprint_approved"
+					: reusableApproved
+						? "all_reusable_patterns_approved"
+						: analysis.patterns.length === 0
+							? "no_patterns_extracted"
+							: "missing_required_patterns";
+
+				ctx.ui.notify(
+					[
+						"Scope: explain",
+						`Target: ${target}`,
+						`Command: ${command}`,
+						`Analysis complete: ${analysis.complete}`,
+						`Exact fingerprint: ${exactFingerprint}`,
+						`Exact approved: ${exactApproved}`,
+						`Reusable approved: ${reusableApproved}`,
+						`Would auto-approve: ${exactApproved || reusableApproved}`,
+						`Decision reason: ${decisionReason}`,
+						"Patterns:",
+						...(patternLines.length > 0 ? patternLines : ["- none"]),
+					].join("\n"),
+					"info",
+				);
 				return;
 			}
 
@@ -252,7 +451,7 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				return;
 			}
 
-			ctx.ui.notify("Usage: /ssh-policy <list|clear|revoke|reload>", "error");
+			ctx.ui.notify("Usage: /ssh-policy <list|clear|revoke|reload|explain>", "error");
 		},
 	});
 }
