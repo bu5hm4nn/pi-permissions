@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 export type PermissionDecision = "allow_once" | "allow_session" | "allow_project" | "deny";
 
 const OPTIONS_ALL = ["1. Allow Once", "2. Allow for this session", "3. Allow for this Project", "4. Deny"];
+const OPTIONS_BASH = ["1. Allow Once", "2. Allow for this session", "3. Deny"]; // No project/global option for bash
 const OPTIONS_RESTRICTED = ["1. Allow Once", "2. Deny"];
 
 export type PermissionDomain = "ssh" | "bash";
@@ -36,7 +37,11 @@ export async function promptPermission(
 	const unsafeNote = preview.reusableUnsafe
 		? "\n\nNote: Reusable approvals are unavailable for this command."
 		: "";
-	const options = preview.reusableUnsafe ? OPTIONS_RESTRICTED : OPTIONS_ALL;
+	const options = preview.reusableUnsafe
+		? OPTIONS_RESTRICTED
+		: domain === "bash"
+			? OPTIONS_BASH
+			: OPTIONS_ALL;
 	const commandText = preview.commandFull && preview.commandFull.trim().length > 0 ? preview.commandFull : preview.commandPreview;
 	const targetLine = domain === "ssh" ? `\nTarget: ${preview.target}` : "";
 	const selected = await ctx.ui.select(
