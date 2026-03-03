@@ -91,9 +91,13 @@ export function extractWgetMethodPatterns(args: string[]): { patterns: string[];
 	if (!parsed.complete) return { patterns: [], complete: false };
 
 	const transferUrl = extractWgetTransferUrl(tokens);
+	// Security: When URL canonicalization fails, use wildcard "*" instead of raw URL.
+	// The raw URL may be malformed or contain sensitive data (credentials, tokens).
+	// Never expose raw URLs in patterns when canonicalization fails.
+	const canonicalUrl = transferUrl ? canonicalizeTransferUrl(transferUrl) : null;
 	const scope =
-		URL_SCOPED_METHODS.has(parsed.method) && transferUrl
-			? (canonicalizeTransferUrl(transferUrl) ?? transferUrl)
+		URL_SCOPED_METHODS.has(parsed.method) && canonicalUrl
+			? canonicalUrl
 			: "*";
 	
 	return { patterns: [`wget ${parsed.method} ${scope}`], complete: true };

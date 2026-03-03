@@ -71,6 +71,37 @@ test("curl analyzer module keeps GET/HEAD broad but URL-scopes mutating methods"
 	assert.deepEqual(canonicalDelete.patterns, ["curl DELETE https://api.example.com/v1/items/1"]);
 });
 
+test("curl analyzer module NEVER exposes credentials in URL-scoped patterns (security)", () => {
+	// Security: URLs with embedded credentials must NOT appear in patterns
+	// canonicalizeTransferUrl strips credentials (only uses protocol/hostname/port/pathname)
+	const credUrl = extractCurlMethodPatterns(["-X", "POST", "https://user:secret-token@api.example.com/items"]);
+	assert.equal(credUrl.complete, true);
+	assert.equal(credUrl.patterns[0].includes("user:secret-token"), false,
+		"Pattern MUST NOT contain credentials from raw URL");
+	assert.equal(credUrl.patterns[0].includes("secret"), false,
+		"Pattern MUST NOT contain any part of the secret");
+	assert.deepEqual(credUrl.patterns, ["curl POST https://api.example.com/items"],
+		"Canonicalized URL should have credentials stripped");
+});
+
+test("curl analyzer module uses wildcard for malformed URLs that fail canonicalization (security)", () => {
+	// Security: When URL canonicalization fails, must use "*" instead of raw URL
+	const noProtocol = extractCurlMethodPatterns(["-X", "PUT", "api.example.com/path"]);
+	assert.equal(noProtocol.complete, true);
+	assert.deepEqual(noProtocol.patterns, ["curl PUT *"],
+		"URL without protocol must NOT appear in pattern; use wildcard instead");
+
+	const emptyHost = extractCurlMethodPatterns(["-X", "DELETE", "https://"]);
+	assert.equal(emptyHost.complete, true);
+	assert.deepEqual(emptyHost.patterns, ["curl DELETE *"],
+		"Malformed URL with empty host must NOT appear in pattern; use wildcard instead");
+
+	const invalidSyntax = extractCurlMethodPatterns(["-X", "POST", "://broken"]);
+	assert.equal(invalidSyntax.complete, true);
+	assert.deepEqual(invalidSyntax.patterns, ["curl POST *"],
+		"Invalid URL syntax must NOT appear in pattern; use wildcard instead");
+});
+
 test("docker analyzer module extracts nested shell command patterns", () => {
 	const nested = extractDockerShellPatterns(
 		["--rm", "alpine", "sh", "-lc", "echo hi && id"],
@@ -96,4 +127,55 @@ test("wget analyzer module treats malformed --method parsing as incomplete", () 
 	const optionTokenAsMethod = extractWgetMethodPatterns(["--method", "--post-data=x", "https://api.example.com/a"]);
 	assert.equal(optionTokenAsMethod.complete, false);
 	assert.deepEqual(optionTokenAsMethod.patterns, []);
+});
+
+test("wget analyzer module NEVER exposes credentials in URL-scoped patterns (security)", () => {
+	// Security: URLs with embedded credentials must NOT appear in patterns
+	// canonicalizeTransferUrl strips credentials (only uses protocol/hostname/port/pathname)
+	// but this test ensures the security property holds regardless of implementation details
+	const credUrl = extractWgetMethodPatterns(["--method=POST", "https://user:secret-token@api.example.com/items"]);
+	assert.equal(credUrl.complete, true);
+	// Credentials are stripped during canonicalization - raw URL must NEVER appear
+	assert.equal(credUrl.patterns[0].includes("user:secret-token"), false, 
+		"Pattern MUST NOT contain credentials from raw URL");
+	assert.equal(credUrl.patterns[0].includes("secret"), false,
+		"Pattern MUST NOT contain any part of the secret");
+	assert.deepEqual(credUrl.patterns, ["wget POST https://api.example.com/items"],
+		"Canonicalized URL should have credentials stripped");
+});
+
+test("wget analyzer module uses wildcard for malformed URLs that fail canonicalization (security)", () => {
+	// Security: When URL canonicalization fails, must use "*" instead of raw URL
+	// The raw URL may be malformed but could still leak sensitive data in logs/patterns
+	
+	// URL without protocol - fails URL parsing
+	const noProtocol = extractWgetMethodPatterns(["--method=PUT", "api.example.com/path"]);
+	assert.equal(noProtocol.complete, true);
+	assert.deepEqual(noProtocol.patterns, ["wget PUT *"],
+		"URL without protocol must NOT appear in pattern; use wildcard instead");
+	
+	// Empty href after protocol - fails URL parsing  
+	const emptyHost = extractWgetMethodPatterns(["--method=DELETE", "https://"]);
+	assert.equal(emptyHost.complete, true);
+	assert.deepEqual(emptyHost.patterns, ["wget DELETE *"],
+		"Malformed URL with empty host must NOT appear in pattern; use wildcard instead");
+	
+	// Completely invalid URL syntax
+	const invalidSyntax = extractWgetMethodPatterns(["--method=POST", "://broken"]);
+	assert.equal(invalidSyntax.complete, true);
+	assert.deepEqual(invalidSyntax.patterns, ["wget POST *"],
+		"Invalid URL syntax must NOT appear in pattern; use wildcard instead");
+});
+
+test("wget analyzer module canonicalizes valid URLs correctly (no regression)", () => {
+	// Regression test: ensure valid URLs are still canonicalized properly
+	const validPost = extractWgetMethodPatterns(["--method=POST", "HTTPS://API.EXAMPLE.COM:443/v1/items?force=true"]);
+	assert.equal(validPost.complete, true);
+	assert.deepEqual(validPost.patterns, ["wget POST https://api.example.com/v1/items"],
+		"Valid URL should be canonicalized (lowercase, default port stripped, query/hash removed)");
+	
+	const validPut = extractWgetMethodPatterns(["--method=PUT", "https://api.example.com:8443/special-port"]);
+	assert.equal(validPut.complete, true);
+	assert.deepEqual(validPut.patterns, ["wget PUT https://api.example.com:8443/special-port"],
+		"Non-default port should be preserved");
 });
