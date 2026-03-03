@@ -215,3 +215,61 @@ export async function readPermissionsConfig(projectDir: string): Promise<Permiss
 
 	return result;
 }
+
+/**
+ * Read only the global permissions config (ignoring project overrides).
+ * Used by /permissions when saving to global scope.
+ */
+export async function readGlobalPermissionsConfig(): Promise<PermissionsConfigResult> {
+	const home = process.env.HOME || homedir();
+	const globalPath = join(home, ".pi", "agent", "permissions.json");
+
+	// Defaults: ssh enabled, bash disabled
+	const result: PermissionsConfigResult = {
+		ssh: { enabled: true },
+		bash: { enabled: false },
+	};
+
+	try {
+		const parsed = await readSecurePermissionsFile(globalPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
+		}
+	} catch {
+		// Ignore errors reading global config
+	}
+
+	return result;
+}
+
+/**
+ * Read only the project permissions config (ignoring global).
+ * Used by /permissions when saving to project scope.
+ */
+export async function readProjectPermissionsConfig(projectDir: string): Promise<PermissionsConfigResult> {
+	const projectRoot = resolveProjectRoot(projectDir);
+	const projectPath = join(projectRoot, ".pi", "permissions.json");
+
+	// Defaults: ssh enabled, bash disabled
+	const result: PermissionsConfigResult = {
+		ssh: { enabled: true },
+		bash: { enabled: false },
+	};
+
+	try {
+		const parsed = await readSecurePermissionsFile(projectPath);
+		if (parsed?.permissions?.ssh?.enabled !== undefined) {
+			result.ssh.enabled = Boolean(parsed.permissions.ssh.enabled);
+		}
+		if (parsed?.permissions?.bash?.enabled !== undefined) {
+			result.bash.enabled = Boolean(parsed.permissions.bash.enabled);
+		}
+	} catch {
+		// Ignore errors reading project config
+	}
+
+	return result;
+}

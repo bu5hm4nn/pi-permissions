@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-cod
 import { analyzeCommandPatterns, getFallbackPattern } from "../policy/command-patterns.ts";
 import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
-import { readPermissionsConfig, resolveProjectRoot } from "../policy/store.ts";
+import { readPermissionsConfig, resolveProjectRoot, readGlobalPermissionsConfig, readProjectPermissionsConfig } from "../policy/store.ts";
 
 export interface PermissionsConfigResult {
 	ssh: { enabled: boolean };
@@ -196,16 +196,20 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 			}
 			try {
 				const cwd = ctx.cwd || process.cwd();
-				const config = await readPermissionsConfig(cwd);
+				// Show effective config (merged) for display purposes
+				const effectiveConfig = await readPermissionsConfig(cwd);
+
+				// Track the user's intended toggle state
+				let intendedBashEnabled = effectiveConfig.bash.enabled;
 
 				// Interactive loop for toggling permissions
 				while (true) {
-					// Build menu options showing current state
+					// Build menu options showing current intended state
 					// Note: SSH toggle removed - SSH permissions are managed via ssh_bash tool approval flow
-					const bashStatus = config.bash.enabled ? "✓" : "○";
+					const bashStatus = intendedBashEnabled ? "✓" : "○";
 
 					const choice = await ctx.ui.select("Permissions Configuration", [
-						`[${bashStatus}] Bash permissions (${config.bash.enabled ? "enabled" : "disabled"})`,
+						`[${bashStatus}] Bash permissions (${intendedBashEnabled ? "enabled" : "disabled"})`,
 						"───────────────────",
 						"Save to global (~/.pi/agent/permissions.json)",
 						"Save to project (.pi/permissions.json)",
@@ -218,15 +222,16 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 
 					// Toggle Bash
 					if (choice.includes("Bash permissions")) {
-						config.bash.enabled = !config.bash.enabled;
+						intendedBashEnabled = !intendedBashEnabled;
 						continue; // Re-show menu with updated state
 					}
 
-					// Save to global
+					// Save to global - read global-only config, apply bash change, persist
 					if (choice.includes("global")) {
+						const globalConfig = await readGlobalPermissionsConfig();
 						await persistPermissionsMvp("global", cwd, {
-							sshEnabled: config.ssh.enabled,
-							bashEnabled: config.bash.enabled,
+							sshEnabled: globalConfig.ssh.enabled,
+							bashEnabled: intendedBashEnabled,
 						});
 						// Live reload: update in-memory config
 						if (state.reloadPermissionsConfig) {
@@ -239,11 +244,12 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 						return;
 					}
 
-					// Save to project
+					// Save to project - read project-only config, apply bash change, persist
 					if (choice.includes("project")) {
+						const projectConfig = await readProjectPermissionsConfig(cwd);
 						await persistPermissionsMvp("project", cwd, {
-							sshEnabled: config.ssh.enabled,
-							bashEnabled: config.bash.enabled,
+							sshEnabled: projectConfig.ssh.enabled,
+							bashEnabled: intendedBashEnabled,
 						});
 						// Live reload: update in-memory config
 						if (state.reloadPermissionsConfig) {
