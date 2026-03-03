@@ -173,6 +173,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		exactFingerprint: string,
 		reusableEntries: Array<{ fingerprint: string; pattern: string; fallbackFingerprint?: string }>,
 		hasUI: boolean,
+		analysisComplete: boolean = true,
 	): Promise<{
 		approved: boolean;
 		scope: "none" | "session" | "project" | "global";
@@ -183,8 +184,9 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			set.has(entry.fingerprint) || (entry.fallbackFingerprint !== undefined && set.has(entry.fallbackFingerprint));
 
 		const sessionApprovedExact = hasUI && sessionGrants.has(exactFingerprint);
+		// Only use reusable patterns when analysis is complete
 		const sessionApprovedReusableOnly =
-			hasUI && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionGrants));
+			hasUI && analysisComplete && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionGrants));
 		try {
 			const global = await readGlobalPolicy();
 			const trustedProject = await isProjectTrusted(requirePaths().projectId);
@@ -198,10 +200,11 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const sessionEffective = new Set(sessionGrants);
 			for (const fp of persistentEffective) sessionEffective.add(fp);
 
+			// Only use reusable patterns when analysis is complete
 			const reusableSatisfiedBySession =
-				hasUI && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionEffective));
+				hasUI && analysisComplete && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, sessionEffective));
 			const reusableSatisfiedByPersistent =
-				reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, persistentEffective));
+				analysisComplete && reusableEntries.length > 0 && reusableEntries.every((entry) => isApprovedInSet(entry, persistentEffective));
 
 			if (sessionApprovedExact || reusableSatisfiedBySession) return { approved: true, scope: "session" };
 			if (globalSet.has(exactFingerprint)) return { approved: true, scope: "global" };
@@ -421,7 +424,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			let decision: PermissionDecision | "auto_allow_policy" | "deny_no_ui" = "deny";
 			let decisionScope: "none" | "session" | "project" | "global" = "none";
 
-			const approval = await getApprovalFromPolicies(fingerprint, reusableEntries, ctx.hasUI);
+			const approval = await getApprovalFromPolicies(fingerprint, reusableEntries, ctx.hasUI, patternAnalysis.complete);
 			if (approval.approved) {
 				decision = "auto_allow_policy";
 				decisionScope = approval.scope;
