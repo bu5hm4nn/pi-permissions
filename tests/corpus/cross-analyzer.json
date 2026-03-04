@@ -49,8 +49,8 @@
     "command": "docker --context prod ps --format '{{.Names}}'",
     "expect": {
       "matcherBlocked": false,
-      "patternsComplete": false,
-      "patterns": []
+      "patternsComplete": true,
+      "patterns": ["docker ps *"]
     }
   },
   {

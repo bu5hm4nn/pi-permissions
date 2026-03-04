@@ -27,13 +27,43 @@ export interface CommandPatternAnalysis {
 	reason?: string;
 }
 
+// Informational docker commands/flags that are safe with specific patterns
+const DOCKER_INFO_COMMANDS = new Set(["--version", "-v", "--help", "-h", "version", "info"]);
+
+// Informational docker subcommand commands (e.g., "docker compose version")
+const DOCKER_SUBCOMMAND_INFO_COMMANDS = new Set(["version", "info", "help"]);
+
 function maybeSubcommand(executable: string, args: string[]): { name: string | null; argOffset: number } {
 	if (!SUBCOMMAND_MATCH_COMMANDS.has(executable.toLowerCase())) return { name: null, argOffset: 0 };
 	if (args.length === 0) return { name: null, argOffset: 0 };
-	const first = normalizeLiteralToken(args[0]);
-	if (!first) return { name: null, argOffset: 0 };
-	if (first === "--" || first.startsWith("-")) return { name: null, argOffset: 0 };
-	return { name: first, argOffset: 1 };
+	
+	// Skip flags like --context, -D, etc. to find the actual subcommand
+	// Flags can have values like --context prod, so we skip flag-value pairs
+	let i = 0;
+	while (i < args.length) {
+		const arg = args[i];
+		if (arg === "--") {
+			// End of options
+			i++;
+			break;
+		}
+		if (arg.startsWith("-")) {
+			// It's a flag - skip it and its potential value
+			i++;
+			// Skip flag value if it doesn't start with '-' (not another flag)
+			if (i < args.length && !args[i].startsWith("-")) {
+				i++;
+			}
+			continue;
+		}
+		// Found non-flag argument - this is the subcommand
+		break;
+	}
+	
+	if (i >= args.length) return { name: null, argOffset: 0 };
+	const subcommand = normalizeLiteralToken(args[i]);
+	if (!subcommand) return { name: null, argOffset: 0 };
+	return { name: subcommand, argOffset: i + 1 };
 }
 
 function extractCommandPattern(node: any, depth: number): { patterns: string[]; complete: boolean } {
@@ -47,17 +77,38 @@ function extractCommandPattern(node: any, depth: number): { patterns: string[]; 
 	const argIndex = resolvedHead.argIndex;
 	const args = extracted.suffixLiterals.slice(argIndex);
 	const subcommand = maybeSubcommand(executable, args);
+	
+	// Handle docker without subcommand
 	if (executable.toLowerCase() === "docker" && !subcommand.name) {
-		return { patterns: [], complete: false };
+		// Check for informational flags like --version, -v, --help
+		const firstArg = args[0];
+		if (firstArg && DOCKER_INFO_COMMANDS.has(firstArg)) {
+			return { patterns: [`docker ${firstArg}`], complete: true };
+		}
+		// Unknown docker command without subcommand - still allow with wildcard
+		return { patterns: ["docker *"], complete: true };
 	}
 
 	const curlPatterns = executable.toLowerCase() === "curl" ? extractCurlMethodPatterns(args) : null;
 	const wgetPatterns = executable.toLowerCase() === "wget" ? extractWgetMethodPatterns(args) : null;
-	const basePatterns = curlPatterns
-		? curlPatterns.patterns
-		: wgetPatterns
-			? wgetPatterns.patterns
-			: [subcommand.name ? `${executable} ${subcommand.name} *` : `${executable} *`];
+	
+	// Build base pattern
+	let basePatterns: string[];
+	if (curlPatterns) {
+		basePatterns = curlPatterns.patterns;
+	} else if (wgetPatterns) {
+		basePatterns = wgetPatterns.patterns;
+	} else if (subcommand.name) {
+		// Check for informational subcommand commands (e.g., "docker compose version")
+		const subcommandArg = args[subcommand.argOffset];
+		if (DOCKER_SUBCOMMAND_INFO_COMMANDS.has(subcommandArg)) {
+			basePatterns = [`${executable} ${subcommand.name} ${subcommandArg}`];
+		} else {
+			basePatterns = [`${executable} ${subcommand.name} *`];
+		}
+	} else {
+		basePatterns = [`${executable} *`];
+	}
 	const patterns = [...basePatterns];
 
 	if (executable.toLowerCase() === "docker" && (subcommand.name === "run" || subcommand.name === "exec")) {

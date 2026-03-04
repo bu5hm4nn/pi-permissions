@@ -319,21 +319,22 @@ test("pattern analysis returns complete flag for simple commands", async () => {
 	assert.equal(result.patternAnalysisComplete, true);
 });
 
-test("pattern analysis returns incomplete flag for complex/uncertain commands", async () => {
+test("pattern analysis returns complete for bare docker command", async () => {
 	const runtime = createRuntime({
 		hasUI: true,
 		checkBashApproval: async () => ({ approved: false, scope: "none" }),
 	});
 
-	// Command 'docker' without subcommand - parser marks as incomplete since docker
-	// requires a subcommand to determine the action pattern
+	// Command 'docker' without subcommand - now treated as complete with wildcard pattern
+	// (shows help/usage, safe to approve generally)
 	const result = (await handleToolCallGuard(
 		{ toolName: "bash", input: { command: "docker" } },
 		runtime,
 	)) as GuardResult;
 
 	assert.equal(result.promptNeeded, true);
-	assert.equal(result.patternAnalysisComplete, false);
+	assert.equal(result.patternAnalysisComplete, true);
+	assert.deepEqual(result.patterns, ["docker *"]);
 });
 
 // =============================================================================

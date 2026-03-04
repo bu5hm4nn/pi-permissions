@@ -9,6 +9,21 @@ test("extracts per-command patterns from chained command", () => {
 	assert.deepEqual(analysis.patterns.sort(), ["cat *", "echo *"]);
 });
 
+test("simple docker command with version flag is complete", () => {
+	// docker --version is a complete, safe command with specific pattern
+	const analysis = analyzeCommandPatterns("docker --version");
+	assert.equal(analysis.complete, true, "docker --version should be analyzed as complete");
+	assert.deepEqual(analysis.patterns, ["docker --version"]);
+});
+
+test("docker compound command with version and subcommand is complete", () => {
+	// docker --version && docker compose version is a simple, fully parseable compound command
+	// Both commands are informational with specific patterns
+	const analysis = analyzeCommandPatterns("docker --version && docker compose version");
+	assert.equal(analysis.complete, true, "docker --version && docker compose version should be analyzed as complete");
+	assert.deepEqual(analysis.patterns.sort(), ["docker --version", "docker compose version"]);
+});
+
 test("matches docker command by subcommand", () => {
 	const analysis = analyzeCommandPatterns("docker ps --format '{{.Names}}'");
 	assert.equal(analysis.complete, true);
@@ -47,10 +62,11 @@ test("does not parse fake shell fragments passed as regular docker command argum
 	assert.deepEqual(new Set(analysis.patterns), new Set(["docker run *", "docker(run): echo *"]));
 });
 
-test("does not fallback to broad docker pattern when subcommand is not statically determined", () => {
+test("docker subcommand is found after flags", () => {
+	// docker --context prod ps -- now correctly identifies 'ps' as subcommand after skipping '--context prod'
 	const analysis = analyzeCommandPatterns("docker --context prod ps --format '{{.Names}}'");
-	assert.equal(analysis.complete, false);
-	assert.deepEqual(analysis.patterns, []);
+	assert.equal(analysis.complete, true);
+	assert.deepEqual(analysis.patterns, ["docker ps *"]);
 });
 
 test("distinguishes curl methods", () => {
