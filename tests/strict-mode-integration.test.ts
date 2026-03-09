@@ -1,38 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleToolCallGuard, handleUserBashGuard } from "../src/ssh/guard.ts";
-import { DIRECT_SSH_PARSE_FAILURE_MODE, isDirectSshFamilyCommand } from "../src/shell/analyzers/direct-ssh.ts";
+import { isDirectSshFamilyCommand } from "../src/shell/analyzers/direct-ssh.ts";
 
 const uncertainHeredoc = String.raw`python3 - <<'PY'
 from pathlib import Path
 print('hello')
 PY`;
 
-test("default runtime mode is strict", () => {
-	assert.equal(DIRECT_SSH_PARSE_FAILURE_MODE, "strict");
-});
-
-test("tool_call guard blocks parser-uncertain command by default", async () => {
+// Parser-uncertain commands WITHOUT SSH should pass through to bash permissions logic,
+// not be blocked with a fake "SSH blocked" error.
+test("tool_call guard allows parser-uncertain command when bash permissions disabled", async () => {
 	const result = await handleToolCallGuard(
 		{ toolName: "bash", input: { command: uncertainHeredoc } },
 		{
 			guardHealthy: true,
 			matchDirectSsh: isDirectSshFamilyCommand,
+			// bash permissions disabled (default) - should pass through
 		},
 	);
-	assert.deepEqual(result, { block: true, reason: "Direct SSH-family commands are blocked. Use ssh_bash." });
+	// Should pass through (undefined result) since no SSH detected and bash permissions disabled
+	assert.equal(result, undefined);
 });
 
-test("user_bash guard blocks parser-uncertain command by default", async () => {
+test("user_bash guard allows parser-uncertain command when bash permissions disabled", async () => {
 	const result = await handleUserBashGuard(
 		{ command: uncertainHeredoc },
 		{
 			guardHealthy: true,
 			matchDirectSsh: isDirectSshFamilyCommand,
+			// bash permissions disabled (default) - should pass through
 		},
 	);
-	assert.equal(result?.result?.exitCode, 126);
-	assert.match(result?.result?.output || "", /direct SSH-family commands are disabled/i);
+	// Should pass through (undefined result) since no SSH detected
+	assert.equal(result, undefined);
 });
 
 test("default matcher still blocks direct ssh-family commands", () => {

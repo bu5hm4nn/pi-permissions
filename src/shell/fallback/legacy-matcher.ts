@@ -134,30 +134,76 @@ function cleanupTokenForKeywordMatch(token: string): string {
 	return t;
 }
 
+/**
+ * Result of checking for SSH-family commands.
+ * - `blocked: true, reason: 'ssh_detected'` - SSH was found in command
+ * - `blocked: true, reason: 'parse_failure'` - Couldn't parse, couldn't confirm no SSH
+ * - `blocked: false` - No SSH detected with reasonable confidence
+ */
+export type SshCheckResult = { blocked: boolean; reason?: 'ssh_detected' | 'parse_failure' };
+
+/**
+ * Legacy matcher with detailed result.
+ * Returns whether blocked and why (ssh_detected vs parse_failure).
+ */
+export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckResult {
+	const sanitized = stripHeredocBodiesForLegacyParsing(command);
+	const segments = legacySplitCommandSegments(sanitized);
+	if (!segments) {
+		// Parse failure - check if command contains SSH keywords as a heuristic
+		const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(command);
+		if (hasSshKeyword) {
+			return { blocked: true, reason: 'ssh_detected' };
+		}
+		return { blocked: true, reason: 'parse_failure' };
+	}
+	for (const seg of segments) {
+		const tokens = legacyTokenizeSegment(seg);
+		if (!tokens) {
+			const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(seg);
+			if (hasSshKeyword) {
+				return { blocked: true, reason: 'ssh_detected' };
+			}
+			return { blocked: true, reason: 'parse_failure' };
+		}
+		const head = legacyResolveHead(tokens, DEFAULT_WRAPPERS);
+		if (head === null) {
+			const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(seg);
+			if (hasSshKeyword) {
+				return { blocked: true, reason: 'ssh_detected' };
+			}
+			return { blocked: true, reason: 'parse_failure' };
+		}
+		if (head && DEFAULT_BLOCKED.has(head)) {
+			return { blocked: true, reason: 'ssh_detected' };
+		}
+
+		for (const token of tokens) {
+			const cleaned = cleanupTokenForKeywordMatch(token);
+			if (!cleaned) continue;
+			const maybe = normalizeExecutableToken(cleaned, { lowercase: true });
+			if (maybe && DEFAULT_BLOCKED.has(maybe)) {
+				return { blocked: true, reason: 'ssh_detected' };
+			}
+		}
+	}
+	return { blocked: false };
+}
+
+/**
+ * Legacy matcher - returns true if command should be blocked.
+ * Used for backward compatibility and as a fallback for the AST parser.
+ */
 export function legacyDirectSshFamilyMatch(
 	command: string,
 	options: { blocked?: ReadonlySet<string>; wrappers?: ReadonlySet<string> } = {},
 ): boolean {
 	const blocked = options.blocked ?? DEFAULT_BLOCKED;
 	const wrappers = options.wrappers ?? DEFAULT_WRAPPERS;
-	const sanitized = stripHeredocBodiesForLegacyParsing(command);
-	const segments = legacySplitCommandSegments(sanitized);
-	if (!segments) return true;
-	for (const seg of segments) {
-		const tokens = legacyTokenizeSegment(seg);
-		if (!tokens) return true;
-		const head = legacyResolveHead(tokens, wrappers);
-		if (head === null) return true;
-		if (head && blocked.has(head)) return true;
-
-		for (const token of tokens) {
-			const cleaned = cleanupTokenForKeywordMatch(token);
-			if (!cleaned) continue;
-			const maybe = normalizeExecutableToken(cleaned, { lowercase: true });
-			if (maybe && blocked.has(maybe)) return true;
-		}
-	}
-	return false;
+	const result = legacyDirectSshFamilyMatchDetailed(command);
+	if (!result.blocked) return false;
+	// For backward compatibility with tests, return true for parse_failure too
+	return true;
 }
 
 export { stripHeredocBodiesForLegacyParsing };

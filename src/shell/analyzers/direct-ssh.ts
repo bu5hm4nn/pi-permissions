@@ -3,10 +3,9 @@ import { parseShell } from "../parser/parse.ts";
 import { extractLiteralCommandNodeParts } from "../parser/command-node.ts";
 import { resolveHeadFromLiterals } from "../parser/resolve-head.ts";
 import { SSH_MATCHER_WRAPPERS as WRAPPERS } from "../parser/wrappers.ts";
+import { legacyDirectSshFamilyMatchDetailed } from "../fallback/legacy-matcher.ts";
 
 const BLOCKED = new Set(["ssh", "scp", "sftp", "sshpass", "mosh"]);
-
-export const DIRECT_SSH_PARSE_FAILURE_MODE = "strict" as const;
 
 function resolveExecutable(commandNode: any): { head: string; complete: boolean } {
 	if (!commandNode?.name) return { head: "", complete: true };
@@ -21,7 +20,12 @@ function resolveExecutable(commandNode: any): { head: string; complete: boolean 
 export function isDirectSshFamilyCommand(command: string): boolean {
 	const parsed = parseShell(command);
 	if (parsed.certainty !== "resolved" || !parsed.ast) {
-		return true;
+		// Parse failure: use legacy text-based matcher as fallback.
+		// This handles cases like process substitution `<(...)` that the parser can't handle.
+		// Only block if SSH is actually detected via text search.
+		const result = legacyDirectSshFamilyMatchDetailed(command);
+		// Only block if SSH was detected, not for parse failures
+		return result.blocked && result.reason === 'ssh_detected';
 	}
 
 	const state = { blocked: false, uncertain: false };
@@ -45,7 +49,8 @@ export function isDirectSshFamilyCommand(command: string): boolean {
 		},
 	});
 
+	// Only block if SSH was actually detected.
+	// Parser uncertainty without detected SSH → pass through to bash permissions logic.
 	if (state.blocked) return true;
-	if (state.uncertain) return true;
 	return false;
 }

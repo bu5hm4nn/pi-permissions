@@ -23,7 +23,11 @@ test("blocks ssh-family commands through wrappers", () => {
 	assert.equal(isDirectSshFamilyCommand("nohup ssh user@host &"), true);
 });
 
-test("strict mode blocks parser-uncertain python heredoc maintenance script", () => {
+// Parser-uncertain commands WITHOUT SSH should pass through (not fake "SSH blocked" error)
+// They will then flow to bash permissions logic which will either:
+// - Pass through (if bash permissions disabled)
+// - Prompt for approval (if bash permissions enabled + UI available)
+test("allows parser-uncertain python heredoc without SSH", () => {
 	const script = String.raw`python3 - <<'PY'
 from pathlib import Path
 files = [
@@ -32,10 +36,10 @@ files = [
 ]
 print('\n'.join(files))
 PY`;
-	assert.equal(isDirectSshFamilyCommand(script), true);
+	assert.equal(isDirectSshFamilyCommand(script), false);
 });
 
-test("strict mode blocks parser-uncertain python heredoc refactor script (anonymized)", () => {
+test("allows parser-uncertain python heredoc refactor script without SSH", () => {
 	const script = String.raw`python3 - <<'PY'
  from pathlib import Path
 
@@ -81,10 +85,10 @@ test("strict mode blocks parser-uncertain python heredoc refactor script (anonym
 
  print('\n'.join(changed))
  PY`;
-	assert.equal(isDirectSshFamilyCommand(script), true);
+	assert.equal(isDirectSshFamilyCommand(script), false);
 });
 
-test("strict mode blocks parser-uncertain multiline loop+array perl maintenance script", () => {
+test("allows parser-uncertain multiline loop+array perl script without SSH", () => {
 	const script = String.raw`
 set -e
 files=(
@@ -107,13 +111,14 @@ perl -pi -e 's/oldcorp/newcorp/g; s/Oldcorp/Newcorp/g' .claude/skills/healthchec
 
 echo done
 `;
-
-	assert.equal(isDirectSshFamilyCommand(script), true);
+	assert.equal(isDirectSshFamilyCommand(script), false);
 });
 
-test("fail-closed on clearly broken shell", () => {
-	assert.equal(isDirectSshFamilyCommand("echo 'unterminated"), true);
-	assert.equal(isDirectSshFamilyCommand("echo ok &&"), true);
+// Broken shell (parse failure) should also pass through to bash permissions logic,
+// not block with fake "SSH blocked" error. The user will be prompted if UI available.
+test("allows broken shell (parse failure) - flows to bash permissions logic", () => {
+	assert.equal(isDirectSshFamilyCommand("echo 'unterminated"), false);
+	assert.equal(isDirectSshFamilyCommand("echo ok &&"), false);
 });
 
 test("fail-closed for advanced/uncertain constructs containing ssh", () => {

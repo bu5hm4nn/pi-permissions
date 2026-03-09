@@ -6,7 +6,7 @@ import {
 	legacyTokenizeSegment,
 	legacyDirectSshFamilyMatch,
 } from "../src/shell/fallback/legacy-matcher.ts";
-import { DIRECT_SSH_PARSE_FAILURE_MODE, isDirectSshFamilyCommand } from "../src/shell/analyzers/direct-ssh.ts";
+import { isDirectSshFamilyCommand } from "../src/shell/analyzers/direct-ssh.ts";
 
 test("legacy heredoc stripping removes heredoc bodies and delimiters", () => {
 	const source = "cat <<'EOF'\nssh user@host\nEOF\necho ok";
@@ -25,12 +25,12 @@ test("legacy matcher remains conservative", () => {
 	assert.equal(legacyDirectSshFamilyMatch("echo 'unterminated"), true);
 });
 
-test("direct-ssh analyzer is strict on parse-failure by default", () => {
-	assert.equal(DIRECT_SSH_PARSE_FAILURE_MODE, "strict");
-
+// direct-ssh analyzer passes through parse failures without detected SSH
+// (flows to bash permissions logic instead of fake "SSH blocked" error)
+test("direct-ssh analyzer allows parse failures without SSH (flows to bash permissions)", () => {
 	const heredocScript = String.raw`python3 - <<'PY'
 from pathlib import Path
 print('hello')
 PY`;
-	assert.equal(isDirectSshFamilyCommand(heredocScript), true);
+	assert.equal(isDirectSshFamilyCommand(heredocScript), false);
 });

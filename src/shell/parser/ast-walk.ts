@@ -68,6 +68,8 @@ export function walkShellAst(node: any, handlers: WalkShellAstHandlers): void {
 				return;
 			case "Function":
 				handlers.onFunction?.(current);
+				// Still walk into function body to check for SSH commands
+				walk(current.body);
 				return;
 			case "Word":
 			case "AssignmentWord":
