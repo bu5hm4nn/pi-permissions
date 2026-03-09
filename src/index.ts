@@ -106,8 +106,9 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			{ command: "\\ssh user@host", expectedBlocked: true },
 			{ command: "sudo -- ssh user@host", expectedBlocked: true },
 			{ command: "\\sudo -- \\ssh user@host", expectedBlocked: true },
-			{ command: "echo 'unterminated", expectedBlocked: true },
-			{ command: "echo ok &&", expectedBlocked: true },
+			// Parse failures without SSH keywords should NOT be blocked (flow to bash permissions)
+			{ command: "echo 'unterminated", expectedBlocked: false },
+			{ command: "echo ok &&", expectedBlocked: false },
 		];
 		for (const c of matcherCases) {
 			let blocked = true;
