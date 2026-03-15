@@ -37,8 +37,22 @@ function maybeSubcommand(executable: string, args: string[]): { name: string | n
 	if (!SUBCOMMAND_MATCH_COMMANDS.has(executable.toLowerCase())) return { name: null, argOffset: 0 };
 	if (args.length === 0) return { name: null, argOffset: 0 };
 	
-	// Skip flags like --context, -D, etc. to find the actual subcommand
-	// Flags can have values like --context prod, so we skip flag-value pairs
+	// Skip flags to find the actual subcommand.
+	// Flags with values (e.g., --context prod) are tricky - we use a list of known value-taking flags
+	// to avoid skipping the subcommand. For unknown flags, we conservatively skip only the flag itself.
+	const FLAGS_WITH_VALUES = new Set([
+		// Docker flags with values
+		"--context", "-c", "--log-level", "-l", "--config",
+		// Git flags with values
+		"-C", "--git-dir", "--work-tree", "-c",
+		// kubectl flags with values
+		"--context", "--cluster", "--user", "--namespace", "-n", "--server", "--kubeconfig",
+		// npm/yarn/pnpm flags with values
+		"--registry", "--scope", "--tag", "-g",
+		// Common flags with values
+		"--output", "-o", "--format", "-f", "--file", "-F", "--directory", "-C",
+	]);
+	
 	let i = 0;
 	while (i < args.length) {
 		const arg = args[i];
@@ -48,11 +62,14 @@ function maybeSubcommand(executable: string, args: string[]): { name: string | n
 			break;
 		}
 		if (arg.startsWith("-")) {
-			// It's a flag - skip it and its potential value
-			i++;
-			// Skip flag value if it doesn't start with '-' (not another flag)
-			if (i < args.length && !args[i].startsWith("-")) {
-				i++;
+			// It's a flag - check if it takes a value
+			const flagBase = arg.includes("=") ? arg.split("=")[0] : arg;
+			if (FLAGS_WITH_VALUES.has(flagBase)) {
+				// Skip flag and its value
+				i += 2;
+			} else {
+				// Boolean/unknown flag - skip only the flag
+				i += 1;
 			}
 			continue;
 		}
@@ -99,10 +116,15 @@ function extractCommandPattern(node: any, depth: number): { patterns: string[]; 
 	} else if (wgetPatterns) {
 		basePatterns = wgetPatterns.patterns;
 	} else if (subcommand.name) {
-		// Check for informational subcommand commands (e.g., "docker compose version")
-		const subcommandArg = args[subcommand.argOffset];
-		if (DOCKER_SUBCOMMAND_INFO_COMMANDS.has(subcommandArg)) {
-			basePatterns = [`${executable} ${subcommand.name} ${subcommandArg}`];
+		// Check for informational docker subcommand commands (e.g., "docker compose version")
+		// Only apply this logic for docker, not other subcommand-capable CLIs
+		if (executable.toLowerCase() === "docker") {
+			const subcommandArg = args[subcommand.argOffset];
+			if (DOCKER_SUBCOMMAND_INFO_COMMANDS.has(subcommandArg)) {
+				basePatterns = [`${executable} ${subcommand.name} ${subcommandArg}`];
+			} else {
+				basePatterns = [`${executable} ${subcommand.name} *`];
+			}
 		} else {
 			basePatterns = [`${executable} ${subcommand.name} *`];
 		}

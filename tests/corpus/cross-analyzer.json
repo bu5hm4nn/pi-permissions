@@ -63,10 +63,10 @@
     }
   },
   {
-    "name": "unterminated quote (no SSH detected, flows to bash permissions)",
+    "name": "unterminated quote (no SSH detected, blocked - fail-closed)",
     "command": "echo 'unterminated",
     "expect": {
-      "matcherBlocked": false,
+      "matcherBlocked": true,
       "patternsComplete": false,
       "patterns": []
     }

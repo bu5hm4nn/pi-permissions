@@ -116,9 +116,10 @@ echo done
 
 // Broken shell (parse failure) should also pass through to bash permissions logic,
 // not block with fake "SSH blocked" error. The user will be prompted if UI available.
-test("allows broken shell (parse failure) - flows to bash permissions logic", () => {
-	assert.equal(isDirectSshFamilyCommand("echo 'unterminated"), false);
-	assert.equal(isDirectSshFamilyCommand("echo ok &&"), false);
+test("blocks broken shell (parse failure) - fail-closed by default", () => {
+	// Parse failures without SSH detected are blocked (fail-closed)
+	assert.equal(isDirectSshFamilyCommand("echo 'unterminated"), true);
+	assert.equal(isDirectSshFamilyCommand("echo ok &&"), true);
 });
 
 test("fail-closed for advanced/uncertain constructs containing ssh", () => {

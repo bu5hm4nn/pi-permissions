@@ -22,10 +22,10 @@ export function isDirectSshFamilyCommand(command: string): boolean {
 	if (parsed.certainty !== "resolved" || !parsed.ast) {
 		// Parse failure: use legacy text-based matcher as fallback.
 		// This handles cases like process substitution `<(...)` that the parser can't handle.
-		// Only block if SSH is actually detected via text search.
+		// Fail-closed: block if SSH detected OR if we can't parse and can't confirm no SSH.
 		const result = legacyDirectSshFamilyMatchDetailed(command);
-		// Only block if SSH was detected, not for parse failures
-		return result.blocked && result.reason === 'ssh_detected';
+		// Block if SSH detected (ssh_detected) or parse failure (can't confirm no SSH)
+		return result.blocked;
 	}
 
 	const state = { blocked: false, uncertain: false };
@@ -49,8 +49,12 @@ export function isDirectSshFamilyCommand(command: string): boolean {
 		},
 	});
 
-	// Only block if SSH was actually detected.
-	// Parser uncertainty without detected SSH → pass through to bash permissions logic.
+	// Block if SSH was detected OR if there's parser uncertainty (fail-closed)
 	if (state.blocked) return true;
+	if (state.uncertain) {
+		// Parser uncertainty with no SSH detected - use legacy matcher for final decision
+		const result = legacyDirectSshFamilyMatchDetailed(command);
+		return result.blocked;
+	}
 	return false;
 }

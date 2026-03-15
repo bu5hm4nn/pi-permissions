@@ -69,6 +69,34 @@ test("docker subcommand is found after flags", () => {
 	assert.deepEqual(analysis.patterns, ["docker ps *"]);
 });
 
+test("docker boolean flags do not skip subcommand", () => {
+	// docker -D ps - '-D' is a boolean flag, 'ps' should still be found as subcommand
+	const analysis = analyzeCommandPatterns("docker -D ps -a");
+	assert.equal(analysis.complete, true);
+	assert.deepEqual(analysis.patterns, ["docker ps *"]);
+});
+
+test("docker compose version gets specific pattern, not wildcard", () => {
+	// docker compose version is informational, should use specific pattern
+	const analysis = analyzeCommandPatterns("docker compose version");
+	assert.equal(analysis.complete, true);
+	assert.deepEqual(analysis.patterns, ["docker compose version"]);
+});
+
+test("git info commands use wildcard, not specific pattern", () => {
+	// git is not docker - info commands should still use wildcard
+	const analysis = analyzeCommandPatterns("git version");
+	assert.equal(analysis.complete, true);
+	assert.deepEqual(analysis.patterns, ["git version *"]);
+});
+
+test("kubectl info commands use wildcard, not specific pattern", () => {
+	// kubectl is not docker - info commands should still use wildcard
+	const analysis = analyzeCommandPatterns("kubectl version --client");
+	assert.equal(analysis.complete, true);
+	assert.deepEqual(analysis.patterns, ["kubectl version *"]);
+});
+
 test("distinguishes curl methods", () => {
 	const getDefault = analyzeCommandPatterns("curl -s https://api.example.com/health");
 	assert.equal(getDefault.complete, true);

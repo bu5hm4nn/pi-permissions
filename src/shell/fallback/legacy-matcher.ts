@@ -150,8 +150,9 @@ export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckRes
 	const sanitized = stripHeredocBodiesForLegacyParsing(command);
 	const segments = legacySplitCommandSegments(sanitized);
 	if (!segments) {
-		// Parse failure - check if command contains SSH keywords as a heuristic
-		const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(command);
+		// Parse failure - check if SANITIZED command contains SSH keywords as a heuristic
+		// Using sanitized to avoid false positives from heredoc bodies
+		const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(sanitized);
 		if (hasSshKeyword) {
 			return { blocked: true, reason: 'ssh_detected' };
 		}
@@ -160,6 +161,7 @@ export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckRes
 	for (const seg of segments) {
 		const tokens = legacyTokenizeSegment(seg);
 		if (!tokens) {
+			// Check sanitized segment for SSH keywords
 			const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(seg);
 			if (hasSshKeyword) {
 				return { blocked: true, reason: 'ssh_detected' };
@@ -168,6 +170,7 @@ export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckRes
 		}
 		const head = legacyResolveHead(tokens, DEFAULT_WRAPPERS);
 		if (head === null) {
+			// Check sanitized segment for SSH keywords
 			const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(seg);
 			if (hasSshKeyword) {
 				return { blocked: true, reason: 'ssh_detected' };

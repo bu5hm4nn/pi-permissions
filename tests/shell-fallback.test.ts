@@ -34,3 +34,22 @@ print('hello')
 PY`;
 	assert.equal(isDirectSshFamilyCommand(heredocScript), false);
 });
+
+// Issue #4 fix: SSH keyword in heredoc body should NOT cause false block
+test("direct-ssh analyzer does not false-block on SSH in heredoc body (legacy path uses sanitized)", () => {
+	const heredocWithSsh = String.raw`python3 - <<'PY'
+import subprocess
+subprocess.run(["ssh", "user@host"])
+PY`;
+	// After heredoc stripping, the script becomes "python3 - <<'PY'" with no SSH
+	// So this should NOT be blocked even though 'ssh' appears in the heredoc body
+	assert.equal(isDirectSshFamilyCommand(heredocWithSsh), false);
+});
+
+test("direct-ssh analyzer blocks heredoc with SSH in actual command", () => {
+	// SSH in the actual command (outside heredoc) should still be blocked
+	const heredocWithSsh = String.raw`ssh user@host <<'EOF'
+some data
+EOF`;
+	assert.equal(isDirectSshFamilyCommand(heredocWithSsh), true);
+});
