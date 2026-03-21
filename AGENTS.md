@@ -56,5 +56,12 @@ Implementation is in `src/` and last subagent quality gate returned **PASS**.
 - Timeout/abort in SSH execution returns error semantics.
 - Truncation always provides `fullOutputPath` when truncated.
 
+## Available Project Agents
+
+### `pattern-improver`
+Analyzes commands logged in `src/policy/analysis-log.ts` that need better pattern extraction. Identifies common command structures and proposes/implements pattern improvements.
+
+Usage: `@pattern-improver` with the analysis log path (e.g., `~/.pi/agent/analysis-log.jsonl`)
+
 ## Open Next Step
 Run real-world integration testing in a controlled environment and capture findings in `docs/`.
