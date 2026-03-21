@@ -1,0 +1,499 @@
+# Command Categories for Intelligent Pattern Matching and Approval
+#
+# Tiers (from lowest to highest risk):
+#   1. readonly     - No side effects, safe to auto-approve
+#   2. status       - Read system state, minimal side effects
+#   3. restart      - Service/container restart, transient changes
+#   4. edit         - Modify existing files/configs
+#   5. create       - Create new files/containers/resources
+#   6. delete       - Destructive operations
+#   7. network      - Network operations (ssh, curl, wget)
+#   8. unknown      - Not categorized, requires full review
+#
+# Structure:
+#   commands:
+#     <executable>:
+#       tier: <tier>
+#       subcommands:
+#         <subcommand>:
+#           tier: <tier>  # Optional: overrides parent tier
+#           patterns:
+#             - "<pattern>"  # Specific patterns for this subcommand
+#       patterns:
+#         - "<pattern>"  # Default patterns for the command
+#       flags:
+#         <flag>:
+#           tier: <tier>  # Flag can change tier
+#
+# Pattern syntax:
+#   - "cmd"          - Exact command only
+#   - "cmd *"         - Command with any arguments
+#   - "cmd -[a-z]*"   - Command with flags
+#   - "cmd <path>"    - Command with path argument
+#   - "cmd ...X"      - Command ending with script letter (for sed/awk)
+
+version: 1
+
+# Tier 1: Read-only commands - no side effects
+tier_definitions:
+  readonly:
+    description: "No side effects, safe for automatic approval"
+    risk_level: 1
+    auto_approve: false  # Requires policy opt-in
+  status:
+    description: "Read system state, minimal side effects"
+    risk_level: 2
+    auto_approve: false
+  restart:
+    description: "Service/container restart, transient changes"
+    risk_level: 3
+    auto_approve: false
+  edit:
+    description: "Modify existing files/configurations"
+    risk_level: 4
+    auto_approve: false
+  create:
+    description: "Create new files/containers/resources"
+    risk_level: 5
+    auto_approve: false
+  delete:
+    description: "Destructive operations"
+    risk_level: 6
+    auto_approve: false
+  network:
+    description: "Network operations requiring external access"
+    risk_level: 3
+    auto_approve: false
+  privileged:
+    description: "Potentially dangerous operations (sudo, su)"
+    risk_level: 7
+    auto_approve: false
+  unknown:
+    description: "Not categorized, requires full review"
+    risk_level: 8
+    auto_approve: false
+
+# Command categorizations
+commands:
+  # === TIER 1: READ-ONLY ===
+  pwd:
+    tier: readonly
+    patterns:
+      - "pwd"
+    note: "Always safe, never takes meaningful arguments"
+
+  whoami:
+    tier: readonly
+    patterns:
+      - "whoami"
+
+  hostname:
+    tier: readonly
+    patterns:
+      - "hostname"
+
+  true:
+    tier: readonly
+    patterns:
+      - "true"
+
+  false:
+    tier: readonly
+    patterns:
+      - "false"
+
+  date:
+    tier: readonly
+    patterns:
+      - "date"
+      - "date *"
+
+  uname:
+    tier: readonly
+    patterns:
+      - "uname"
+
+  id:
+    tier: readonly
+    patterns:
+      - "id"
+
+  echo:
+    tier: readonly
+    patterns:
+      - "echo"  # Simple echo
+      - "echo *"  # But note: needs to check for $() backticks
+    flags:
+      "-n":
+        note: "No newline - still readonly"
+      "-e":
+        note: "Interpret escapes - still readonly"
+    note: "WARNING: echo with $(...) should escalate tier"
+
+  # === TIER 1-2: FILE READ ===
+  cat:
+    tier: readonly
+    patterns:
+      - "cat <path>"  # Path argument
+      - "cat -n <path>"
+    flags:
+      "-n":
+        note: "Line numbers"
+      "-b":
+        note: "Number non-blank lines"
+
+  head:
+    tier: readonly
+    patterns:
+      - "head <path>"
+      - "head -n * <path>"
+
+  tail:
+    tier: readonly
+    patterns:
+      - "tail <path>"
+      - "tail -n * <path>"
+
+  less:
+    tier: readonly
+    patterns:
+      - "less <path>"
+
+  more:
+    tier: readonly
+    patterns:
+      - "more <path>"
+
+  wc:
+    tier: readonly
+    patterns:
+      - "wc <path>"
+      - "wc -[lwcm] <path>"
+
+  sort:
+    tier: readonly
+    patterns:
+      - "sort <path>"
+    note: "Sort is readonly unless -o (output) flag used"
+
+  uniq:
+    tier: readonly
+    patterns:
+      - "uniq <path>"
+
+  grep:
+    tier: readonly
+    patterns:
+      - "grep <pattern> <path>"
+      - "grep -* <path>"
+      - "grep -r <path>"
+    note: "Grep never modifies files"
+
+  rg:
+    tier: readonly
+    patterns:
+      - "rg <pattern> <path>"
+
+  ag:
+    tier: readonly
+    patterns:
+      - "ag <pattern> <path>"
+
+  # === TIER 1: SED (readonly by default) ===
+  sed:
+    tier: readonly  # Default
+    patterns:
+      - "sed ...p"  # Print commands are readonly
+      - "sed -n ...p"
+    note: "WARNING: sed -i escalates to 'edit' tier"
+    flags:
+      "-i":
+        tier: edit
+        note: "In-place edit escalates tier"
+      "--in-place":
+        tier: edit
+
+  awk:
+    tier: readonly
+    patterns:
+      - "awk *"
+    note: "Default awk is readonly, but system() calls escalate"
+
+  # === TIER 1: FIND ===
+  find:
+    tier: readonly
+    patterns:
+      - "find <path>"  # Starting path
+      - "find <path> -type *"
+      - "find <path> -name *"
+      - "find <path> -print"
+    note: "WARNING: find -exec escalates tier"
+    flags:
+      "-exec":
+        tier: unknown  # Depends on what's being executed
+        note: "Execution with find - dangerous"
+      "-execdir":
+        tier: unknown
+      "-delete":
+        tier: delete
+
+  # === TIER 2: STATUS COMMANDS ===
+  systemctl:
+    tier: status
+    patterns:
+      - "systemctl status"
+      - "systemctl list-*"
+      - "systemctl show"
+    subcommands:
+      "status":
+        tier: status
+      "list-units":
+        tier: status
+      "list-unit-files":
+        tier: status
+      "show":
+        tier: status
+      "is-active":
+        tier: status
+      "is-enabled":
+        tier: status
+      "restart":
+        tier: restart
+      "reload":
+        tier: restart
+      "start":
+        tier: restart
+      "stop":
+        tier: restart
+      "enable":
+        tier: edit
+      "disable":
+        tier: edit
+      "mask":
+        tier: delete
+
+  journalctl:
+    tier: readonly
+    patterns:
+      - "journalctl"
+      - "journalctl -u *"
+
+  docker:
+    tier: status  # Default
+    patterns:
+      - "docker ps"
+      - "docker images"
+      - "docker logs"
+    subcommands:
+      "ps":
+        tier: status
+        patterns:
+          - "docker ps"
+      "images":
+        tier: status
+      "logs":
+        tier: status
+      "inspect":
+        tier: status
+      "top":
+        tier: status
+      "stats":
+        tier: status
+      "exec":
+        tier: unknown
+        note: "Depends on what's executed"
+      "run":
+        tier: create
+        patterns:
+          - "docker run *"
+      "build":
+        tier: create
+      "stop":
+        tier: restart
+      "start":
+        tier: restart
+      "restart":
+        tier: restart
+      "rm":
+        tier: delete
+      "rmi":
+        tier: delete
+      "prune":
+        tier: delete
+
+  docker-compose:
+    tier: status
+    subcommands:
+      "ps":
+        tier: status
+      "logs":
+        tier: status
+      "config":
+        tier: status
+      "up":
+        tier: create
+      "down":
+        tier: delete
+      "restart":
+        tier: restart
+
+  kubectl:
+    tier: status
+    patterns:
+      - "kubectl get"
+      - "kubectl describe"
+      - "kubectl logs"
+    subcommands:
+      "get":
+        tier: status
+      "describe":
+        tier: status
+      "logs":
+        tier: status
+      "apply":
+        tier: edit
+      "create":
+        tier: create
+      "delete":
+        tier: delete
+      "exec":
+        tier: unknown
+
+  git:
+    tier: readonly
+    subcommands:
+      "status":
+        tier: status
+      "log":
+        tier: readonly
+      "diff":
+        tier: readonly
+      "show":
+        tier: readonly
+      "branch":
+        tier: status
+      "add":
+        tier: edit
+      "commit":
+        tier: edit
+      "push":
+        tier: network
+      "pull":
+        tier: network
+      "checkout":
+        tier: edit
+        note: "Can discard changes"
+      "reset":
+        tier: delete
+        note: "Can discard commits"
+
+  npm:
+    tier: readonly
+    subcommands:
+      "list":
+        tier: status
+      "ls":
+        tier: status
+      "outdated":
+        tier: status
+      "install":
+        tier: create
+      "uninstall":
+        tier: delete
+      "update":
+        tier: edit
+
+  # === TIER 3: RESTART ===
+  # (covered under systemctl/docker/kubectl)
+
+  # === TIER 4: EDIT ===
+  vim:
+    tier: edit
+    patterns:
+      - "vim <path>"
+
+  nano:
+    tier: edit
+    patterns:
+      - "nano <path>"
+
+  # sed -i covered above
+
+  # === TIER 5: CREATE ===
+  touch:
+    tier: create
+    patterns:
+      - "touch <path>"
+
+  mkdir:
+    tier: create
+    patterns:
+      - "mkdir <path>"
+      - "mkdir -p <path>"
+
+  cp:
+    tier: create
+    patterns:
+      - "cp <src> <dst>"
+
+  mv:
+    tier: edit  # or create/delete depending on view
+    patterns:
+      - "mv <src> <dst>"
+    note: "Move is edit (rename) of same filesystem"
+
+  # === TIER 6: DELETE ===
+  rm:
+    tier: delete
+    patterns:
+      - "rm <path>"
+      - "rm -r <path>"
+      - "rm -rf <path>"
+
+  rmdir:
+    tier: delete
+    patterns:
+      - "rmdir <path>"
+
+  # === TIER 3: NETWORK ===
+  curl:
+    tier: network
+    patterns:
+      - "curl GET *"
+      - "curl POST *"
+      - "curl *"
+
+  wget:
+    tier: network
+    patterns:
+      - "wget GET *"
+      - "wget POST *"
+      - "wget *"
+
+  # Note: ssh, scp, sftp are handled by ssh_bash tool
+
+  # === TIER 7: PRIVILEGED ===
+  sudo:
+    tier: privileged
+    note: "Escalates command tier - analyze wrapped command"
+
+  su:
+    tier: privileged
+
+  doas:
+    tier: privileged
+
+  # === WRAPPERS ===
+  env:
+    tier: unknown  # Pass-through, inherits tier of wrapped command
+    note: "Analyze environment and wrapped command"
+
+  xargs:
+    tier: unknown  # Pass-through
+    note: "Analyze wrapped command"
+
+  # === PIPES AND CHAINS ===
+  # Pipes combine command tiers - the highest tier wins
+  # Example: "cat file | grep pattern" -> readonly
+  # Example: "cat file | sed -i 's/old/new/'" -> edit
+  # Example: "rm -rf / | echo done" -> delete

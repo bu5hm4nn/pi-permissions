@@ -56,5 +56,37 @@ Implementation is in `src/` and last subagent quality gate returned **PASS**.
 - Timeout/abort in SSH execution returns error semantics.
 - Truncation always provides `fullOutputPath` when truncated.
 
+## Available Project Agents
+
+### `pattern-improver`
+Analyzes commands logged in `src/policy/analysis-log.ts` that need better pattern extraction. Identifies common command structures and proposes/implements pattern improvements.
+
+Usage: `@pattern-improver` with the analysis log path (e.g., `~/.pi/agent/analysis-log.jsonl`)
+
+## Available Project Agents
+
+### `pattern-improver`
+Analyzes commands logged in `src/policy/command-categories.yaml` and `~/.pi/agent/analysis-log.jsonl` that need better pattern extraction. Identifies common command structures and proposes/implements pattern improvements.
+
+Usage: `@pattern-improver Analyze the analysis log and propose improvements`
+
+#### Command Categorization System
+
+The project includes a tiered command categorization system in `src/policy/command-categories.yaml`:
+
+| Tier | Risk Level | Examples | Auto-Approve Potential |
+|------|------------|----------|------------------------|
+| `readonly` | 1 | pwd, cat, ls, grep, head | Safe for session-wide approval |
+| `status` | 2 | systemctl status, docker ps, git status | Safe with session approval |
+| `restart` | 3 | systemctl restart, docker restart | Transient changes |
+| `edit` | 4 | vim, nano, sed -i | Moderate risk |
+| `create` | 5 | touch, mkdir, cp | Higher risk |
+| `delete` | 6 | rm, rmdir, docker rm | Requires explicit approval |
+| `network` | 3 | curl, wget | Depends on endpoint |
+| `privileged` | 7 | sudo, su | Maximum scrutiny |
+| `unknown` | 8 | Uncategorized commands | Full review required |
+
+Use `analyzeCommandTier(executable, args)` to get the tier for any command.
+
 ## Open Next Step
 Run real-world integration testing in a controlled environment and capture findings in `docs/`.

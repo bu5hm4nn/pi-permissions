@@ -7,6 +7,7 @@ import { registerPolicyCommands } from "./commands/ssh-policy";
 import { analyzeCommandPatterns, formatAllowPatternSummary, getFallbackPattern } from "./policy/command-patterns";
 import { isBashSessionApproved } from "./policy/bash-session-approval";
 import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
+import { initAnalysisLog, logAnalysisResult } from "./policy/analysis-log";
 import type { PolicyFile } from "./policy/schema";
 import { emptyPolicyFile } from "./policy/schema";
 import {
@@ -106,6 +107,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			{ command: "\\ssh user@host", expectedBlocked: true },
 			{ command: "sudo -- ssh user@host", expectedBlocked: true },
 			{ command: "\\sudo -- \\ssh user@host", expectedBlocked: true },
+			// Parse failures are fail-closed and should be blocked
 			{ command: "echo 'unterminated", expectedBlocked: true },
 			{ command: "echo ok &&", expectedBlocked: true },
 		];
@@ -274,6 +276,8 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		try {
 			paths = await runStartupSelfCheck(ctx.cwd);
 			guardHealthy = true;
+			// Initialize analysis log for commands that need pattern improvement
+			initAnalysisLog(dirname(paths.globalPath));
 			// Load permissions config
 			try {
 				permissionsConfig = await readPermissionsConfig(ctx.cwd);
@@ -408,6 +412,15 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			const fingerprint = computeFingerprint({ target: params.target, command: params.command });
 			const commandPreview = buildCommandPreview(params.command);
 			const patternAnalysis = analyzeCommandPatterns(params.command);
+
+			// Log commands that need pattern improvement
+			await logAnalysisResult(params.command, {
+				target: params.target,
+				cwd: params.cwd,
+				patternAnalysisComplete: patternAnalysis.complete,
+				patterns: patternAnalysis.patterns,
+				reason: patternAnalysis.reason,
+			});
 			const allowPatternSummary = formatAllowPatternSummary(patternAnalysis.patterns);
 			const reusableEntries = patternAnalysis.patterns.map((pattern) => {
 				const fallbackPattern = getFallbackPattern(pattern);
@@ -419,7 +432,7 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			});
 			const reusableFingerprints = reusableEntries.map((entry) => entry.fingerprint);
 			const reusableUnsafe =
-				isReusableUnsafe(params.command, params.cwd) || !patternAnalysis.complete || reusableFingerprints.length === 0;
+				isReusableUnsafe(params.command, params.cwd, patternAnalysis.complete) || !patternAnalysis.complete || reusableFingerprints.length === 0;
 
 			let decision: PermissionDecision | "auto_allow_policy" | "deny_no_ui" = "deny";
 			let decisionScope: "none" | "session" | "project" | "global" = "none";
