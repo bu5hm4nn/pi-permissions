@@ -26,16 +26,19 @@ Implementation is in `src/` and last subagent quality gate returned **PASS**.
   - `docs/subagent-rereview-results.md`
 
 ## Working Conventions For Next Agent
-1. **Always use the `implementation-coder` subagent for code changes** (mandatory project rule).
-2. **Always run `implementation-reviewer` after implementation changes** before finalizing.
-3. **Follow strict TDD (test-first)**:
+1. **ALWAYS use subagents for code changes** (mandatory project rule):
+   - Use `@implementation-coder` for all code changes - never edit files directly.
+   - Use `@implementation-reviewer` after implementation changes before finalizing.
+   - Use `@pattern-improver` for pattern analysis and improvement work.
+   - Use `@security-reviewer` for security-sensitive changes.
+2. **Follow strict TDD (test-first)**:
    - Write or update a failing test that captures the requested behavior/regression **before** code changes.
    - Confirm the test fails for the expected reason.
    - Implement the minimal code change to make the test pass.
    - Re-run the full relevant test suite and report results.
-4. Make small, testable changes.
-5. Keep behavior aligned with the spec unless user asks for changes.
-6. If changing security-sensitive behavior, run reviewer subagent before finalizing.
+3. Make small, testable changes.
+4. Keep behavior aligned with the spec unless user asks for changes.
+5. If changing security-sensitive behavior, run `@security-reviewer` before finalizing.
 
 ## Suggested Subagent Flow
 - Red step (TDD): `implementation-coder` adds/updates failing test first and shows failure.
@@ -59,18 +62,16 @@ Implementation is in `src/` and last subagent quality gate returned **PASS**.
 ## Available Project Agents
 
 ### `pattern-improver`
-Analyzes commands logged in `src/policy/analysis-log.ts` that need better pattern extraction. Identifies common command structures and proposes/implements pattern improvements.
-
-Usage: `@pattern-improver` with the analysis log path (e.g., `~/.pi/agent/analysis-log.jsonl`)
-
-## Available Project Agents
-
-### `pattern-improver`
-Analyzes commands logged in `src/policy/command-categories.yaml` and `~/.pi/agent/analysis-log.jsonl` that need better pattern extraction. Identifies common command structures and proposes/implements pattern improvements.
+Analyzes commands logged in `~/.pi/agent/analysis-log.jsonl` that need better pattern extraction. Identifies common command structures and proposes/implements pattern improvements.
 
 Usage: `@pattern-improver Analyze the analysis log and propose improvements`
 
-#### Command Categorization System
+### `heredoc-classifier`
+Classifies heredoc scripts as readonly (safe), modify (writes/deletes), or unknown. Use when analyzing shell commands containing heredocs to determine approval tier.
+
+The skill file is at `.pi/skills/heredoc-classifier.md` and the implementation is in `src/shell/analyzers/heredoc-classifier.ts`.
+
+## Command Categorization System
 
 The project includes a tiered command categorization system in `src/policy/command-categories.yaml`:
 

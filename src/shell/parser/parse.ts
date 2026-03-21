@@ -3,6 +3,7 @@
 // @ts-ignore
 import parseBashModule from "bash-parser";
 import type { ParseShellResult } from "./types.ts";
+import { stripHeredocBodies } from "./heredoc-preprocess.ts";
 
 export const parseBash: ((source: string) => any) | undefined =
 	typeof parseBashModule === "function" ? parseBashModule : (parseBashModule as any)?.default;
@@ -12,7 +13,10 @@ export function parseShell(source: string): ParseShellResult {
 		return { ast: null, certainty: "uncertain", error: "bash_parser_unavailable" };
 	}
 	try {
-		return { ast: parseBash(source), certainty: "resolved" };
+		// Preprocess to strip heredoc content - the parser doesn't handle non-shell
+		// languages inside heredocs (Python, JS, etc.) and will fail on them.
+		const preprocessed = stripHeredocBodies(source);
+		return { ast: parseBash(preprocessed), certainty: "resolved" };
 	} catch (error) {
 		return {
 			ast: null,
