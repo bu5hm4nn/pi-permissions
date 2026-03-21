@@ -85,8 +85,8 @@
     "command": "python3 - <<'PY'\nfrom pathlib import Path\nprint('hello')\nPY",
     "expect": {
       "matcherBlocked": false,
-      "patternsComplete": false,
-      "patterns": []
+      "patternsComplete": true,
+      "patterns": ["python3 *"]
     }
   }
 ]

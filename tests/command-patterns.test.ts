@@ -256,3 +256,93 @@ test("marks analysis incomplete when command is dynamic", () => {
 	assert.equal(analysis.complete, false);
 	assert.deepEqual(analysis.patterns, []);
 });
+
+// === HEREDOC TESTS ===
+// Heredoc preprocessing strips the body content before parsing, allowing
+// the parser to extract the outer command pattern. The analysis is marked
+// incomplete because the heredoc marker itself (`<<'PY'`) is technically
+// incomplete without a body, but we still get useful patterns.
+
+test("handles python heredoc with json.loads that would confuse parser", () => {
+	// This is the exact pattern from the analysis log that was failing
+	// Previously would fail with "Unexpected 'OPEN_PAREN'" parsing Python as shell
+	const cmd = `python3 - <<'PY'
+import json
+from pathlib import Path
+cfg = json.loads(Path('config.json').read_text())
+print(cfg.get('key'))
+PY`;
+	const analysis = analyzeCommandPatterns(cmd);
+	// After stripping heredocs, the command is parseable
+	assert.equal(analysis.complete, true, "Heredoc commands are complete after stripping");
+	assert.deepEqual(analysis.patterns, ["python3 *"]);
+});
+
+test("handles python heredoc in chained command with echo", () => {
+	const cmd = `echo '--- config ---' && python3 - <<'PY'
+import json
+cfg = json.loads(data)
+print(json.dumps(cfg))
+PY`;
+	const analysis = analyzeCommandPatterns(cmd);
+	assert.equal(analysis.complete, true, "Heredoc commands are complete after stripping");
+	assert.deepEqual(analysis.patterns.sort(), ["echo *", "python3 *"]);
+});
+
+test("handles node heredoc with JavaScript code", () => {
+	const cmd = `node --input-type=module <<'EOF'
+import fs from 'node:fs';
+const cfg = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));
+console.log(JSON.stringify(cfg, null, 2));
+EOF`;
+	const analysis = analyzeCommandPatterns(cmd);
+	assert.equal(analysis.complete, true, "Heredoc commands are complete after stripping");
+	assert.deepEqual(analysis.patterns, ["node *"]);
+});
+
+test("handles multiple heredocs in sequence", () => {
+	const cmd = `set -euo pipefail
+python3 - <<'PY'
+from pathlib import Path
+print(Path('file.txt').read_text())
+PY
+
+python3 - <<'PY'
+import json
+cfg = json.loads('{}')
+print(cfg)
+PY`;
+	const analysis = analyzeCommandPatterns(cmd);
+	// After stripping heredocs, the command is parseable
+	assert.equal(analysis.complete, true, "Heredoc commands can be complete after stripping");
+	// set is a builtin (no pattern), python3 should be extracted twice but deduplicated
+	assert.ok(analysis.patterns.includes("python3 *"));
+});
+
+test("handles heredoc in docker compose exec command", () => {
+	// This pattern appeared in the analysis log
+	const cmd = `docker compose exec -T openclaw-gateway node --input-type=module <<'EOF'
+import fs from 'node:fs';
+const cfg = JSON.parse(fs.readFileSync('/home/node/config.json', 'utf8'));
+console.log(JSON.stringify(cfg, null, 2));
+EOF`;
+	const analysis = analyzeCommandPatterns(cmd);
+	// After stripping heredoc, the command is parseable and complete
+	assert.equal(analysis.complete, true, "Heredoc commands can now be complete after stripping");
+	assert.deepEqual(analysis.patterns, ["docker compose *"]);
+});
+
+test("handles curl followed by python heredoc", () => {
+	const cmd = `sample=/tmp/sample.wav
+curl -fsSL -o /tmp/sample.wav https://example.com/audio.wav
+python3 - <<'PY'
+from pathlib import Path
+audio = Path('/tmp/sample.wav').read_bytes()
+print(len(audio))
+PY`;
+	const analysis = analyzeCommandPatterns(cmd);
+	// Analysis may be incomplete due to variable assignment, but patterns are extracted
+	assert.equal(analysis.complete, false, "Heredoc commands may be incomplete due to variable assignments");
+	assert.ok(analysis.patterns.includes("curl GET *"), "Should extract curl pattern");
+	assert.ok(analysis.patterns.includes("python3 *"), "Should extract python3 pattern");
+});
