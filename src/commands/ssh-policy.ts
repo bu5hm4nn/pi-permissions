@@ -7,6 +7,7 @@ import { analyzeCommandPatterns, getFallbackPattern } from "../policy/command-pa
 import { computeFingerprint } from "../policy/fingerprint.ts";
 import { emptyPolicyFile, type PolicyFile } from "../policy/schema.ts";
 import { readPermissionsConfig, resolveProjectRoot, readGlobalPermissionsConfig, readProjectPermissionsConfig, writeAtomicSecure, assertSecurePath } from "../policy/store.ts";
+import { readEntriesNeedingImprovement, getAnalysisLogPath } from "../policy/analysis-log.ts";
 
 export interface PermissionsConfigResult {
 	ssh: { enabled: boolean };
@@ -451,7 +452,49 @@ export function registerPolicyCommands(pi: ExtensionAPI, state: PolicyCommandSta
 				return;
 			}
 
-			ctx.ui.notify("Usage: /ssh-policy <list|clear|revoke|reload|explain>", "error");
+			if (cmd === "improve") {
+				// Show commands that need pattern improvement
+				const logPath = getAnalysisLogPath();
+				if (!logPath) {
+					ctx.ui.notify("Analysis log not initialized.", "error");
+					return;
+				}
+				try {
+					const entries = await readEntriesNeedingImprovement();
+					if (entries.length === 0) {
+						ctx.ui.notify("No commands needing improvement found in analysis log.", "info");
+						return;
+					}
+					const lines = entries.slice(0, 20).map((e, idx) => {
+						const patterns = e.patterns.join(", ") || "none";
+						const complete = e.patternAnalysisComplete ? "✓" : "✗";
+						const target = e.target || "local";
+						return [
+							`${idx + 1}. [${complete}] ${e.command.slice(0, 60)}${e.command.length > 60 ? "..." : ""}`,
+							`   Target: ${target}`,
+							`   Patterns: ${patterns}`,
+							e.reason ? `   Reason: ${e.reason}` : null,
+						]
+							.filter(Boolean)
+							.join("\n");
+					});
+					const more = entries.length > 20 ? `\n... and ${entries.length - 20} more` : "";
+					ctx.ui.notify([
+						`Analysis Log: ${logPath}`,
+						`${entries.length} commands need improvement:`,
+						...lines,
+						more,
+						"",
+						"Legend: [✓] = analysis complete but patterns are wildcards, [✗] = analysis incomplete",
+						"Run with --full to see complete commands.",
+					].join("\n"), "info");
+				} catch (e) {
+					ctx.ui.notify(`Failed to read analysis log: ${e instanceof Error ? e.message : String(e)}`, "error");
+				}
+				return;
+			}
+
+			ctx.ui.notify("Usage: /ssh-policy <list|clear|revoke|reload|explain|improve>", "error");
 		},
 	});
 }

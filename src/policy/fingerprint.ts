@@ -37,10 +37,39 @@ export function buildCommandPreview(command: string, maxLen = 120): string {
 	return `${oneLine.slice(0, maxLen - 3)}...`;
 }
 
-export function isReusableUnsafe(command: string, cwd?: string): boolean {
-	if (cwd && cwd.trim().length > 0) return true;
+/**
+ * Determine if a command is unsafe for reusable approvals.
+ *
+ * Commands are "reusable-unsafe" if they:
+ * - Reference relative paths (./ or ../) - these are cwd-dependent
+ * - Use variable interpolation that we can't resolve
+ * - Contain dynamic elements that make the fingerprint unstable
+ *
+ * Note: Having a cwd alone doesn't make a command unsafe IF the pattern analysis
+ * is complete - in that case, we have fully extracted the commands and can safely
+ * approve them for reuse.
+ */
+export function isReusableUnsafe(command: string, cwd?: string, patternAnalysisComplete?: boolean): boolean {
 	const c = normalizeCommand(command);
-	return /(^|\s|[;\n|&]\s*)(\.\/|\.\.\/)/.test(c);
+
+	// Check for relative path references that make the command cwd-dependent
+	if (/(^|\s|[;\n|&]\s*)(\.\/|\.\.\/)/.test(c)) {
+		return true;
+	}
+
+	// If pattern analysis is complete, we've fully extracted the commands.
+	// Even with cwd, the patterns are stable and reusable.
+	// Without pattern analysis completeness, cwd-dependent commands are unsafe.
+	if (patternAnalysisComplete === true) {
+		return false; // Patterns are fully extracted, safe for reuse
+	}
+
+	// Pattern analysis incomplete AND cwd provided - conservative: unsafe
+	if (cwd && cwd.trim().length > 0) {
+		return true;
+	}
+
+	return false;
 }
 
 export function computeBashFingerprint(command: string): string {
