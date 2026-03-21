@@ -25,25 +25,27 @@ test("legacy matcher remains conservative", () => {
 	assert.equal(legacyDirectSshFamilyMatch("echo 'unterminated"), true);
 });
 
-// direct-ssh analyzer passes through parse failures without detected SSH
-// (flows to bash permissions logic instead of fake "SSH blocked" error)
-test("direct-ssh analyzer allows parse failures without SSH (flows to bash permissions)", () => {
+// direct-ssh analyzer uses legacy matcher for parser-uncertain cases
+// FAIL-CLOSED: Parser-uncertain cases are blocked even without SSH detected
+test("direct-ssh analyzer blocks heredocs without SSH (fail-closed)", () => {
 	const heredocScript = String.raw`python3 - <<'PY'
 from pathlib import Path
 print('hello')
 PY`;
-	assert.equal(isDirectSshFamilyCommand(heredocScript), false);
+	// Parser can't build AST, fail-closed behavior blocks because we can't confirm no SSH
+	assert.equal(isDirectSshFamilyCommand(heredocScript), true);
 });
 
-// Issue #4 fix: SSH keyword in heredoc body should NOT cause false block
-test("direct-ssh analyzer does not false-block on SSH in heredoc body (legacy path uses sanitized)", () => {
+// Issue #4 fix: SSH keyword in heredoc body is not detected (heredoc stripped)
+// FAIL-CLOSED: Parser-uncertain cases are blocked, regardless of SSH in heredoc body
+test("direct-ssh analyzer blocks heredoc with SSH in body (fail-closed)", () => {
 	const heredocWithSsh = String.raw`python3 - <<'PY'
 import subprocess
 subprocess.run(["ssh", "user@host"])
 PY`;
-	// After heredoc stripping, the script becomes "python3 - <<'PY'" with no SSH
-	// So this should NOT be blocked even though 'ssh' appears in the heredoc body
-	assert.equal(isDirectSshFamilyCommand(heredocWithSsh), false);
+	// Parser-uncertain cases are blocked (fail-closed)
+	// SSH in Python code inside heredoc is irrelevant - we can't confirm no SSH
+	assert.equal(isDirectSshFamilyCommand(heredocWithSsh), true);
 });
 
 test("direct-ssh analyzer blocks heredoc with SSH in actual command", () => {

@@ -54,16 +54,16 @@
     }
   },
   {
-    "name": "dynamic executable (no SSH detected)",
+    "name": "dynamic executable (no SSH detected, blocked as uncertain)",
     "command": "$RUNNER foo",
     "expect": {
-      "matcherBlocked": false,
+      "matcherBlocked": true,
       "patternsComplete": false,
       "patterns": []
     }
   },
   {
-    "name": "unterminated quote (no SSH detected, blocked - fail-closed)",
+    "name": "unterminated quote (no SSH detected, blocked - parse_failure)",
     "command": "echo 'unterminated",
     "expect": {
       "matcherBlocked": true,
@@ -81,10 +81,10 @@
     }
   },
   {
-    "name": "python heredoc (no SSH, flows to bash permissions)",
+    "name": "python heredoc (parser uncertain, fail-closed for parse_failure)",
     "command": "python3 - <<'PY'\nfrom pathlib import Path\nprint('hello')\nPY",
     "expect": {
-      "matcherBlocked": false,
+      "matcherBlocked": true,
       "patternsComplete": false,
       "patterns": []
     }

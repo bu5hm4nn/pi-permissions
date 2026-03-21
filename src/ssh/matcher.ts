@@ -1,1 +1,1 @@
-export { isDirectSshFamilyCommand } from "../shell/analyzers/direct-ssh.ts";
+export { isDirectSshFamilyCommand, isDirectSshFamilyCommandDetailed, type SshCheckResult } from "../shell/analyzers/direct-ssh.ts";

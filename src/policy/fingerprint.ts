@@ -41,13 +41,15 @@ export function buildCommandPreview(command: string, maxLen = 120): string {
  * Determine if a command is unsafe for reusable approvals.
  *
  * Commands are "reusable-unsafe" if they:
+ * - Have a cwd provided (any non-empty cwd makes it unsafe for reusable approval)
  * - Reference relative paths (./ or ../) - these are cwd-dependent
  * - Use variable interpolation that we can't resolve
  * - Contain dynamic elements that make the fingerprint unstable
  *
- * Note: Having a cwd alone doesn't make a command unsafe IF the pattern analysis
- * is complete - in that case, we have fully extracted the commands and can safely
- * approve them for reuse.
+ * Note: Having cwd always makes a command unsafe for reusable approvals because:
+ * - The same command fingerprint can execute in different directories
+ * - Session/project approvals should not grant blanket permission across directories
+ * - Relative paths (./ ../) remain unsafe regardless of cwd presence
  */
 export function isReusableUnsafe(command: string, cwd?: string, patternAnalysisComplete?: boolean): boolean {
 	const c = normalizeCommand(command);
@@ -57,14 +59,9 @@ export function isReusableUnsafe(command: string, cwd?: string, patternAnalysisC
 		return true;
 	}
 
-	// If pattern analysis is complete, we've fully extracted the commands.
-	// Even with cwd, the patterns are stable and reusable.
-	// Without pattern analysis completeness, cwd-dependent commands are unsafe.
-	if (patternAnalysisComplete === true) {
-		return false; // Patterns are fully extracted, safe for reuse
-	}
-
-	// Pattern analysis incomplete AND cwd provided - conservative: unsafe
+	// Any non-empty cwd makes the command unsafe for reusable approvals
+	// The key fingerprint excludes cwd, so reusable approvals would grant
+	// execution rights across different directories - a security risk
 	if (cwd && cwd.trim().length > 0) {
 		return true;
 	}

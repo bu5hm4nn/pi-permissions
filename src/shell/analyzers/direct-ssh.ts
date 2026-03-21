@@ -7,6 +7,15 @@ import { legacyDirectSshFamilyMatchDetailed } from "../fallback/legacy-matcher.t
 
 const BLOCKED = new Set(["ssh", "scp", "sftp", "sshpass", "mosh"]);
 
+/**
+ * Result type for detailed SSH-family command detection.
+ * - `blocked: true, reason: 'ssh_detected'` - SSH-family command found
+ * - `blocked: true, reason: 'parse_failure'` - Parse error, couldn't confirm no SSH
+ * - `blocked: true, reason: 'uncertain'` - Parser uncertainty (functions, unknown constructs)
+ * - `blocked: false, reason: undefined` - No SSH-family command detected
+ */
+export type SshCheckResult = { blocked: boolean; reason?: "ssh_detected" | "parse_failure" | "uncertain" };
+
 function resolveExecutable(commandNode: any): { head: string; complete: boolean } {
 	if (!commandNode?.name) return { head: "", complete: true };
 
@@ -17,15 +26,22 @@ function resolveExecutable(commandNode: any): { head: string; complete: boolean 
 	return { head: resolved.head, complete: resolved.complete };
 }
 
-export function isDirectSshFamilyCommand(command: string): boolean {
+/**
+ * Check if a command contains a direct SSH-family invocation and return detailed reason.
+ * This is the detailed version that provides the specific reason for blocking.
+ */
+export function isDirectSshFamilyCommandDetailed(command: string): SshCheckResult {
 	const parsed = parseShell(command);
 	if (parsed.certainty !== "resolved" || !parsed.ast) {
-		// Parse failure: use legacy text-based matcher as fallback.
-		// This handles cases like process substitution `<(...)` that the parser can't handle.
-		// Fail-closed: block if SSH detected OR if we can't parse and can't confirm no SSH.
+		// Parser couldn't produce a resolved AST - FAIL-CLOSED behavior.
+		// Delegate to legacy matcher to check for SSH, but enforce fail-closed:
+		// - Preserve ssh_detected if legacy matcher positively detects SSH
+		// - Otherwise return parse_failure (couldn't confirm no SSH)
 		const result = legacyDirectSshFamilyMatchDetailed(command);
-		// Block if SSH detected (ssh_detected) or parse failure (can't confirm no SSH)
-		return result.blocked;
+		if (result.reason === "ssh_detected") {
+			return { blocked: true, reason: "ssh_detected" };
+		}
+		return { blocked: true, reason: "parse_failure" };
 	}
 
 	const state = { blocked: false, uncertain: false };
@@ -49,12 +65,25 @@ export function isDirectSshFamilyCommand(command: string): boolean {
 		},
 	});
 
-	// Block if SSH was detected OR if there's parser uncertainty (fail-closed)
-	if (state.blocked) return true;
-	if (state.uncertain) {
-		// Parser uncertainty with no SSH detected - use legacy matcher for final decision
-		const result = legacyDirectSshFamilyMatchDetailed(command);
-		return result.blocked;
+	// Block if SSH was detected
+	if (state.blocked) {
+		return { blocked: true, reason: "ssh_detected" };
 	}
-	return false;
+
+	// AST-walk uncertainty on resolved AST: block as uncertain
+	// (functions, dynamic executables, unknown constructs)
+	if (state.uncertain) {
+		return { blocked: true, reason: "uncertain" };
+	}
+
+	return { blocked: false, reason: undefined };
+}
+
+/**
+ * Boolean version of SSH-family command detection.
+ * Returns true if the command should be blocked, false otherwise.
+ */
+export function isDirectSshFamilyCommand(command: string): boolean {
+	const result = isDirectSshFamilyCommandDetailed(command);
+	return result.blocked;
 }

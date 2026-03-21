@@ -1,5 +1,6 @@
 import { analyzeCommandPatterns } from "../policy/command-patterns.ts";
 import { buildCommandPreview, computeBashFingerprint } from "../policy/fingerprint.ts";
+import { isDirectSshFamilyCommandDetailed, type SshCheckResult } from "../shell/analyzers/direct-ssh.ts";
 
 export interface BashApprovalResult {
 	approved: boolean;
@@ -18,7 +19,7 @@ export interface GuardResult {
 
 export interface GuardRuntime {
 	guardHealthy: boolean;
-	matchDirectSsh: (command: string) => boolean;
+	matchDirectSsh: (command: string) => boolean | SshCheckResult;
 	audit?: (entry: Record<string, unknown>) => Promise<void>;
 	// Optional bash permissions config
 	bashPermissions?: { enabled: boolean };
@@ -26,6 +27,20 @@ export interface GuardRuntime {
 	checkBashApproval?: (fingerprint: string, domain: string, patterns?: string[], analysisComplete?: boolean) => Promise<BashApprovalResult>;
 	// Whether UI is available for prompts
 	hasUI?: boolean;
+}
+
+/**
+ * Get a user-facing message for SSH block reasons.
+ */
+function getSshBlockMessage(reason: "ssh_detected" | "parse_failure" | "uncertain"): string {
+	switch (reason) {
+		case "ssh_detected":
+			return "Direct SSH-family commands are blocked. Use ssh_bash.";
+		case "parse_failure":
+			return "Cannot safely parse command. Use ssh_bash for remote SSH.";
+		case "uncertain":
+			return "Command contains uncertain constructs. Use ssh_bash for remote SSH.";
+	}
 }
 
 export async function handleToolCallGuard(event: any, runtime: GuardRuntime) {
@@ -37,15 +52,27 @@ export async function handleToolCallGuard(event: any, runtime: GuardRuntime) {
 	const cmd = String((event.input as any)?.command ?? "");
 
 	// Always check direct SSH blocking first (takes precedence)
-	let directSshBlocked = true;
+	let directSshResult: SshCheckResult = { blocked: true, reason: "parse_failure" };
 	try {
-		directSshBlocked = runtime.matchDirectSsh(cmd);
+		const result = runtime.matchDirectSsh(cmd);
+		// Handle both boolean and detailed result formats
+		if (typeof result === "boolean") {
+			directSshResult = { blocked: result, reason: result ? undefined : undefined };
+		} else {
+			directSshResult = result;
+		}
 	} catch {
-		directSshBlocked = true;
-	}
-	if (directSshBlocked) {
+		// Matcher exception - fail-closed with generic SSH block message
 		await runtime.audit?.({ event: "tool_call_block", reason: "direct_ssh_block", commandPreview: buildCommandPreview(cmd) });
 		return { block: true, reason: "Direct SSH-family commands are blocked. Use ssh_bash." };
+	}
+
+	if (directSshResult.blocked) {
+		// Determine reason: use detailed reason if available, otherwise default
+		const reason = directSshResult.reason ?? "ssh_detected";
+		const message = getSshBlockMessage(reason as "ssh_detected" | "parse_failure" | "uncertain");
+		await runtime.audit?.({ event: "tool_call_block", reason: "direct_ssh_block", sshReason: reason, commandPreview: buildCommandPreview(cmd) });
+		return { block: true, reason: message };
 	}
 
 	// If bash permissions not enabled (default), passthrough
@@ -117,17 +144,52 @@ export async function handleUserBashGuard(event: { command: string }, runtime: G
 			},
 		};
 	}
-	let blocked = true;
+
+	// Check direct SSH blocking with detailed results
+	let directSshResult: SshCheckResult = { blocked: true, reason: "parse_failure" };
 	try {
-		blocked = runtime.matchDirectSsh(event.command);
+		const result = runtime.matchDirectSsh(event.command);
+		// Handle both boolean and detailed result formats
+		if (typeof result === "boolean") {
+			directSshResult = { blocked: result, reason: result ? undefined : undefined };
+		} else {
+			directSshResult = result;
+		}
 	} catch {
-		blocked = true;
+		// Matcher exception - fail-closed with generic SSH block message
+		await runtime.audit?.({ event: "user_bash_block", reason: "direct_ssh_block", commandPreview: buildCommandPreview(event.command) });
+		return {
+			result: {
+				output: "Blocked: direct SSH-family commands are disabled. Use ssh_bash tool.",
+				exitCode: 126,
+				cancelled: false,
+				truncated: false,
+			},
+		};
 	}
-	if (!blocked) return;
-	await runtime.audit?.({ event: "user_bash_block", reason: "direct_ssh_block", commandPreview: buildCommandPreview(event.command) });
+
+	if (!directSshResult.blocked) return;
+
+	const reason = directSshResult.reason ?? "ssh_detected";
+	let message: string;
+	switch (reason) {
+		case "ssh_detected":
+			message = "Blocked: Direct SSH-family commands are disabled. Use ssh_bash.";
+			break;
+		case "parse_failure":
+			message = "Blocked: Cannot safely parse command. Use ssh_bash for remote SSH.";
+			break;
+		case "uncertain":
+			message = "Blocked: Command contains uncertain constructs. Use ssh_bash for remote SSH.";
+			break;
+		default:
+			message = "Blocked: Direct SSH-family commands are disabled. Use ssh_bash.";
+	}
+
+	await runtime.audit?.({ event: "user_bash_block", reason: "direct_ssh_block", sshReason: reason, commandPreview: buildCommandPreview(event.command) });
 	return {
 		result: {
-			output: "Blocked: direct SSH-family commands are disabled. Use ssh_bash tool.",
+			output: message,
 			exitCode: 126,
 			cancelled: false,
 			truncated: false,

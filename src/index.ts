@@ -3,13 +3,13 @@ import { lstat, mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { registerPolicyCommands } from "./commands/ssh-policy";
-import { analyzeCommandPatterns, formatAllowPatternSummary, getFallbackPattern } from "./policy/command-patterns";
-import { isBashSessionApproved } from "./policy/bash-session-approval";
-import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint";
-import { initAnalysisLog, logAnalysisResult } from "./policy/analysis-log";
-import type { PolicyFile } from "./policy/schema";
-import { emptyPolicyFile } from "./policy/schema";
+import { registerPolicyCommands } from "./commands/ssh-policy.ts";
+import { analyzeCommandPatterns, formatAllowPatternSummary, getFallbackPattern } from "./policy/command-patterns.ts";
+import { isBashSessionApproved } from "./policy/bash-session-approval.ts";
+import { buildCommandPreview, computeBashFingerprint, computeFingerprint, isReusableUnsafe } from "./policy/fingerprint.ts";
+import { initAnalysisLog, logAnalysisResult } from "./policy/analysis-log.ts";
+import type { PolicyFile } from "./policy/schema.ts";
+import { emptyPolicyFile } from "./policy/schema.ts";
 import {
 	readPermissionsConfig,
 	readPolicy,
@@ -19,13 +19,13 @@ import {
 	type PermissionsConfigResult,
 	upsertGrant,
 	writePolicy,
-} from "./policy/store";
-import { isProjectTrusted, trustProject } from "./policy/trust";
-import { executeSsh, toToolContent } from "./ssh/execute";
-import { handleToolCallGuard, handleUserBashGuard } from "./ssh/guard";
-import { isDirectSshFamilyCommand } from "./ssh/matcher";
-import { validateSshInput } from "./ssh/validate";
-import { promptPermission, type PermissionDecision } from "./ui/prompt";
+} from "./policy/store.ts";
+import { isProjectTrusted, trustProject } from "./policy/trust.ts";
+import { executeSsh, toToolContent } from "./ssh/execute.ts";
+import { handleToolCallGuard, handleUserBashGuard } from "./ssh/guard.ts";
+import { isDirectSshFamilyCommand, isDirectSshFamilyCommandDetailed } from "./ssh/matcher.ts";
+import { validateSshInput } from "./ssh/validate.ts";
+import { promptPermission, type PermissionDecision } from "./ui/prompt.ts";
 
 const schema = Type.Object({
 	target: Type.String({ description: "SSH target, e.g. user@host" }),
@@ -39,10 +39,11 @@ function now() {
 }
 
 export interface SshPermissionExtensionOptions {
-	directSshMatcher?: (command: string) => boolean;
+	directSshMatcher?: (command: string) => boolean | { blocked: boolean; reason?: "ssh_detected" | "parse_failure" | "uncertain" };
 }
 
 export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPermissionExtensionOptions) {
+	// Use detailed matcher internally, wrapping boolean matchers to match interface
 	const directSshMatcher = options?.directSshMatcher ?? isDirectSshFamilyCommand;
 	let paths: StorePaths | null = null;
 	let sessionGrants = new Set<string>();
@@ -99,27 +100,37 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 		const trustedProject = await isProjectTrusted(resolved.projectId);
 		if (trustedProject) await readPolicy(resolved.projectPath);
 
-		const matcherCases: Array<{ command: string; expectedBlocked: boolean }> = [
+		// Self-check cases: command, expected blocked, and optional expected reason
+		const matcherCases: Array<{ command: string; expectedBlocked: boolean; expectedReason?: "ssh_detected" | "parse_failure" | "uncertain" }> = [
 			{ command: "echo ok", expectedBlocked: false },
 			{ command: "FOO=bar", expectedBlocked: false },
 			{ command: "echo hi > out.txt", expectedBlocked: false },
-			{ command: "ssh user@host", expectedBlocked: true },
-			{ command: "\\ssh user@host", expectedBlocked: true },
-			{ command: "sudo -- ssh user@host", expectedBlocked: true },
-			{ command: "\\sudo -- \\ssh user@host", expectedBlocked: true },
-			// Parse failures are fail-closed and should be blocked
-			{ command: "echo 'unterminated", expectedBlocked: true },
-			{ command: "echo ok &&", expectedBlocked: true },
+			{ command: "ssh user@host", expectedBlocked: true, expectedReason: "ssh_detected" },
+			{ command: "\\ssh user@host", expectedBlocked: true, expectedReason: "ssh_detected" },
+			{ command: "sudo -- ssh user@host", expectedBlocked: true, expectedReason: "ssh_detected" },
+			{ command: "\\sudo -- \\ssh user@host", expectedBlocked: true, expectedReason: "ssh_detected" },
+			// Parse failures are fail-closed and should be blocked with parse_failure reason
+			{ command: "echo 'unterminated", expectedBlocked: true, expectedReason: "parse_failure" },
+			{ command: "echo ok &&", expectedBlocked: true, expectedReason: "parse_failure" },
 		];
+
+		// Use detailed matcher for self-check to verify both blocked status and reason
+		const detailedMatcher = isDirectSshFamilyCommandDetailed;
 		for (const c of matcherCases) {
-			let blocked = true;
+			let result: { blocked: boolean; reason?: string };
 			try {
-				blocked = directSshMatcher(c.command);
+				result = detailedMatcher(c.command);
 			} catch {
-				blocked = true;
+				result = { blocked: true, reason: "parse_failure" };
 			}
-			if (blocked !== c.expectedBlocked) {
-				throw new Error(`matcher self-check failed for command: ${c.command}`);
+			if (result.blocked !== c.expectedBlocked) {
+				throw new Error(`matcher self-check failed for command '${c.command}': blocked=${result.blocked}, expected blocked=${c.expectedBlocked}`);
+			}
+			// Verify reason for blocked cases that have expected reason
+			if (c.expectedBlocked && c.expectedReason !== undefined) {
+				if (result.reason !== c.expectedReason) {
+					throw new Error(`matcher self-check failed for command '${c.command}': reason='${result.reason}', expected reason='${c.expectedReason}'`);
+				}
 			}
 		}
 

@@ -427,6 +427,32 @@ Rules:
 - Re-read policy and trust files from disk
 - Keep in-memory session grants unchanged
 
+## `/ssh-policy improve`
+Lists commands from the analysis log that need pattern improvement.
+
+Purpose:
+- Shows commands that produced incomplete pattern analysis or wildcard-only patterns
+- Helps identify gaps in the pattern extraction system
+- Provides visibility for manual review and potential pattern improvements
+
+Output:
+- Analysis log path
+- Number of commands needing improvement
+- Up to 20 recent entries showing:
+  - Index number
+  - Analysis completeness status ([✓] complete, [✗] incomplete)
+  - Command preview (truncated)
+  - Target
+  - Extracted patterns
+  - Reason (if any)
+
+Legend:
+- `[✓]` = analysis complete but patterns are wildcards (needs improvement)
+- `[✗]` = analysis incomplete (command could not be fully parsed)
+
+The analysis log is stored at `~/.pi/agent/analysis-log.jsonl` and contains only
+`commandPreview` fields (no full command storage for security).
+
 ---
 
 ## 13) Security and observability
