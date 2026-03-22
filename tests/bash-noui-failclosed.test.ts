@@ -372,7 +372,7 @@ test("direct SSH blocking logs audit before bash permission check", async () => 
 	});
 
 	await handleToolCallGuard(
-		{ toolName: "bash", input: { command: "scp file.txt user@host:/tmp/" } },
+		{ toolName: "bash", input: { command: "ssh user@host" } },
 		runtime,
 	);
 

@@ -103,10 +103,16 @@ export default function sshPermissionExtension(pi: ExtensionAPI, options?: SshPe
 			{ command: "echo ok", expectedBlocked: false },
 			{ command: "FOO=bar", expectedBlocked: false },
 			{ command: "echo hi > out.txt", expectedBlocked: false },
+			// SCP passes through (not blocked) - triggers bash permissions if enabled
+			{ command: "scp file user@host:/tmp", expectedBlocked: false },
+			{ command: "scp -r dir user@host:/tmp", expectedBlocked: false },
+			// SSH-family commands that are blocked
 			{ command: "ssh user@host", expectedBlocked: true },
 			{ command: "\\ssh user@host", expectedBlocked: true },
 			{ command: "sudo -- ssh user@host", expectedBlocked: true },
 			{ command: "\\sudo -- \\ssh user@host", expectedBlocked: true },
+			{ command: "sftp user@host", expectedBlocked: true },
+			{ command: "mosh user@host", expectedBlocked: true },
 			// Parse failures are fail-closed and should be blocked
 			{ command: "echo 'unterminated", expectedBlocked: true },
 			{ command: "echo ok &&", expectedBlocked: true },

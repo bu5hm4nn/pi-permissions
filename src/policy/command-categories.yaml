@@ -470,7 +470,7 @@ commands:
       - "wget POST *"
       - "wget *"
 
-  # Note: ssh, scp, sftp are handled by ssh_bash tool
+  # Note: ssh and sftp are blocked by SSH matcher; scp passes through to bash permissions
 
   # === TIER 7: PRIVILEGED ===
   sudo:
