@@ -190,3 +190,87 @@ test("integration: formatAllowPatternSummary works with guard patterns", async (
 		assert.ok(summary.includes("curl"), "Summary should include curl pattern");
 	}
 });
+
+// =============================================================================
+// SCP Passthrough - Bash Permissions Flow Tests
+// SCP commands pass through the SSH matcher and should trigger bash approval flow
+// =============================================================================
+
+test("SCP commands pass through guard to bash permissions when enabled", async () => {
+	let approvalChecked = false;
+	const runtime: GuardRuntime = {
+		guardHealthy: true,
+		matchDirectSsh: (cmd: string) => cmd.includes("ssh") && !cmd.includes("scp"), // SCP passes through
+		bashPermissions: { enabled: true },
+		hasUI: true,
+		checkBashApproval: async () => {
+			approvalChecked = true;
+			return { approved: false, scope: "none" };
+		},
+	};
+
+	// SCP command should pass SSH matcher and reach bash permissions
+	const result = await handleToolCallGuard(
+		{ toolName: "bash", input: { command: "scp file user@host:/tmp" } },
+		runtime,
+	);
+
+	// Approval check should have been invoked for SCP
+	assert.ok(approvalChecked, "SCP should trigger bash approval check");
+
+	// When not approved and UI available, should signal promptNeeded
+	assert.ok(result?.promptNeeded === true, "SCP should trigger promptNeeded for bash approval");
+});
+
+test("SCP commands blocked in no-UI mode when bash permissions enabled", async () => {
+	const runtime: GuardRuntime = {
+		guardHealthy: true,
+		matchDirectSsh: (cmd: string) => cmd.includes("ssh") && !cmd.includes("scp"), // SCP passes through
+		bashPermissions: { enabled: true },
+		hasUI: false,
+		checkBashApproval: async () => ({ approved: false, scope: "none" }),
+	};
+
+	const result = await handleToolCallGuard(
+		{ toolName: "bash", input: { command: "scp file user@host:/tmp" } },
+		runtime,
+	);
+
+	// In no-UI mode, SCP should be blocked (requires approval but can't prompt)
+	assert.ok(result?.block === true, "SCP should be blocked in no-UI mode");
+	assert.match(result?.reason || "", /not approved/i, "Should mention not approved");
+});
+
+test("SCP commands passthrough when bash permissions disabled", async () => {
+	const runtime: GuardRuntime = {
+		guardHealthy: true,
+		matchDirectSsh: (cmd: string) => cmd.includes("ssh") && !cmd.includes("scp"), // SCP passes through
+		bashPermissions: { enabled: false }, // Bash permissions disabled (default)
+	};
+
+	const result = await handleToolCallGuard(
+		{ toolName: "bash", input: { command: "scp file user@host:/tmp" } },
+		runtime,
+	);
+
+	// With bash permissions disabled, SCP should passthrough completely
+	assert.equal(result, undefined, "SCP should passthrough when bash permissions disabled");
+});
+
+test("SCP with approved bash permissions executes without prompt", async () => {
+	const runtime: GuardRuntime = {
+		guardHealthy: true,
+		matchDirectSsh: (cmd: string) => cmd.includes("ssh") && !cmd.includes("scp"), // SCP passes through
+		bashPermissions: { enabled: true },
+		hasUI: true,
+		checkBashApproval: async () => ({ approved: true, scope: "session" }),
+	};
+
+	const result = await handleToolCallGuard(
+		{ toolName: "bash", input: { command: "scp file user@host:/tmp" } },
+		runtime,
+	);
+
+	// Pre-approved SCP should passthrough
+	assert.equal(result, undefined, "Pre-approved SCP should passthrough");
+});

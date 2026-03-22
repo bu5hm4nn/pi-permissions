@@ -5,7 +5,8 @@ import { resolveHeadFromLiterals } from "../parser/resolve-head.ts";
 import { SSH_MATCHER_WRAPPERS as WRAPPERS } from "../parser/wrappers.ts";
 import { legacyDirectSshFamilyMatchDetailed } from "../fallback/legacy-matcher.ts";
 
-const BLOCKED = new Set(["ssh", "scp", "sftp", "sshpass", "mosh"]);
+// SCP is intentionally NOT in BLOCKED - it passes through to bash permissions
+const BLOCKED = new Set(["ssh", "sftp", "sshpass", "mosh"]);
 
 function resolveExecutable(commandNode: any): { head: string; complete: boolean } {
 	if (!commandNode?.name) return { head: "", complete: true };

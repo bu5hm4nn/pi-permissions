@@ -2,7 +2,8 @@ import { stripHeredocBodiesForLegacyParsing } from "./heredoc.ts";
 import { isEnvAssignmentToken, normalizeExecutableToken } from "../parser/tokens.ts";
 import { SSH_MATCHER_WRAPPERS as DEFAULT_WRAPPERS, stepWrapper } from "../parser/wrappers.ts";
 
-const DEFAULT_BLOCKED = new Set(["ssh", "scp", "sftp", "sshpass", "mosh"]);
+// SCP is intentionally NOT blocked - it passes through to bash permissions
+const DEFAULT_BLOCKED = new Set(["ssh", "sftp", "sshpass", "mosh"]);
 
 export function legacySplitCommandSegments(command: string): string[] | null {
 	const out: string[] = [];
@@ -152,7 +153,8 @@ export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckRes
 	if (!segments) {
 		// Parse failure - check if SANITIZED command contains SSH keywords as a heuristic
 		// Using sanitized to avoid false positives from heredoc bodies
-		const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(sanitized);
+		// Note: SCP is excluded - it passes through to bash permissions
+		const hasSshKeyword = /\b(ssh|sftp|sshpass|mosh)\b/.test(sanitized);
 		if (hasSshKeyword) {
 			return { blocked: true, reason: 'ssh_detected' };
 		}
@@ -162,7 +164,8 @@ export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckRes
 		const tokens = legacyTokenizeSegment(seg);
 		if (!tokens) {
 			// Check sanitized segment for SSH keywords
-			const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(seg);
+			// Note: SCP is excluded - it passes through to bash permissions
+			const hasSshKeyword = /\b(ssh|sftp|sshpass|mosh)\b/.test(seg);
 			if (hasSshKeyword) {
 				return { blocked: true, reason: 'ssh_detected' };
 			}
@@ -171,7 +174,8 @@ export function legacyDirectSshFamilyMatchDetailed(command: string): SshCheckRes
 		const head = legacyResolveHead(tokens, DEFAULT_WRAPPERS);
 		if (head === null) {
 			// Check sanitized segment for SSH keywords
-			const hasSshKeyword = /\b(ssh|scp|sftp|sshpass|mosh)\b/.test(seg);
+			// Note: SCP is excluded - it passes through to bash permissions
+			const hasSshKeyword = /\b(ssh|sftp|sshpass|mosh)\b/.test(seg);
 			if (hasSshKeyword) {
 				return { blocked: true, reason: 'ssh_detected' };
 			}

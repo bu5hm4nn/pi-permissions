@@ -8,9 +8,10 @@ test("allows regular shell commands", () => {
 	assert.equal(isDirectSshFamilyCommand("FOO=bar"), false);
 });
 
-test("blocks direct ssh-family commands", () => {
+test("blocks direct ssh-family commands (except SCP which passes through)", () => {
 	assert.equal(isDirectSshFamilyCommand("ssh user@host"), true);
-	assert.equal(isDirectSshFamilyCommand("scp file user@host:/tmp"), true);
+	// SCP passes through to bash permissions - not blocked by SSH matcher
+	assert.equal(isDirectSshFamilyCommand("scp file user@host:/tmp"), false);
 	assert.equal(isDirectSshFamilyCommand("sftp user@host"), true);
 	assert.equal(isDirectSshFamilyCommand("mosh user@host"), true);
 	assert.equal(isDirectSshFamilyCommand("sshpass -p secret ssh user@host"), true);
